@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PYENV_VERSION="${PYENV_VERSION:-system}"
+
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+TOOL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+exec python3 "$TOOL_ROOT/notes_potential_todo_processor.py" "$@"
