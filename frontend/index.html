@@ -280,7 +280,7 @@
         await fetch(apiPath("/auth/logout"), {
           method: "POST",
           cache: "no-store",
-          credentials: "same-origin",
+          credentials: "include",
         });
         signedIn = false;
         signedInEmail = "";
@@ -900,4 +900,3 @@
   </script>
 </body>
 </html>
-
