@@ -6,16 +6,20 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -133,6 +137,93 @@ class GoogleVerifier:
         user = AuthUser(user_id=sub, email=str(data.get("email", "")).strip())
         self._cache_set(token, user, exp)
         return user
+
+
+class GoogleOAuthClient:
+    def __init__(self) -> None:
+        self.client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+        self.client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+        self.redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
+
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret and self.redirect_uri)
+
+    def build_authorize_url(self, state: str) -> str:
+        params = urlencode(
+            {
+                "client_id": self.client_id,
+                "redirect_uri": self.redirect_uri,
+                "response_type": "code",
+                "scope": "openid email profile",
+                "prompt": "select_account",
+                "state": state,
+            }
+        )
+        return f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+
+    def exchange_code_for_id_token(self, code: str) -> str:
+        payload = urlencode(
+            {
+                "code": code,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "redirect_uri": self.redirect_uri,
+                "grant_type": "authorization_code",
+            }
+        ).encode("utf-8")
+        req = Request(
+            "https://oauth2.googleapis.com/token",
+            method="POST",
+            data=payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        id_token = str(data.get("id_token", "")).strip()
+        if not id_token:
+            raise AuthError("Google token exchange missing id_token.")
+        return id_token
+
+
+class SessionManager:
+    def __init__(self, secret: str, *, max_age_seconds: int = 14 * 24 * 3600) -> None:
+        self.secret = secret.encode("utf-8")
+        self.max_age_seconds = max_age_seconds
+
+    def _sign(self, payload_b64: str) -> str:
+        sig = hmac.new(self.secret, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+        return base64.urlsafe_b64encode(sig).decode("ascii").rstrip("=")
+
+    def issue(self, user: AuthUser) -> str:
+        payload = {
+            "sub": user.user_id,
+            "email": user.email,
+            "exp": int(time.time()) + self.max_age_seconds,
+        }
+        payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        payload_b64 = base64.urlsafe_b64encode(payload_json).decode("ascii").rstrip("=")
+        return f"{payload_b64}.{self._sign(payload_b64)}"
+
+    def verify(self, token: str) -> AuthUser:
+        raw = token.strip()
+        if "." not in raw:
+            raise AuthError("Invalid session token.")
+        payload_b64, sig = raw.split(".", 1)
+        expected = self._sign(payload_b64)
+        if not hmac.compare_digest(sig, expected):
+            raise AuthError("Session signature mismatch.")
+        payload_raw = base64.urlsafe_b64decode((payload_b64 + "=" * (-len(payload_b64) % 4)).encode("ascii"))
+        payload = json.loads(payload_raw.decode("utf-8"))
+        exp = int(payload.get("exp", 0))
+        if exp <= int(time.time()):
+            raise AuthError("Session expired.")
+        sub = str(payload.get("sub", "")).strip()
+        if not sub:
+            raise AuthError("Session missing user id.")
+        return AuthUser(user_id=sub, email=str(payload.get("email", "")).strip())
 
 
 def parse_args() -> argparse.Namespace:
@@ -275,10 +366,8 @@ def unscoped_project_name(user_id: str, scoped: str) -> str | None:
     return scoped[len(prefix) :]
 
 
-def build_html(initial_project: str, google_client_id: str, google_redirect_uri: str) -> str:
+def build_html(initial_project: str) -> str:
     init_json = json.dumps(initial_project, ensure_ascii=False)
-    google_client_id_json = json.dumps(google_client_id or "", ensure_ascii=False)
-    google_redirect_uri_json = json.dumps(google_redirect_uri or "", ensure_ascii=False)
     template = """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -485,8 +574,6 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
 
   <script>
     const initialProject = {init_json};
-    const googleClientId = {google_client_id_json};
-    const googleRedirectUri = {google_redirect_uri_json};
     const meta = document.getElementById("meta");
     const currentProjectLabel = document.getElementById("current-project");
     const homeView = document.getElementById("home-view");
@@ -529,80 +616,35 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
     const expandedTodoKeys = new Set();
     const expandedNoteKeys = new Set();
     const AUTO_REFRESH_MS = 2000;
-    let authToken = "";
+    let signedIn = false;
+    let signedInEmail = "";
     const authLabel = document.getElementById("auth-label");
 
-    function parseJwtPayload(token) {{
-      try {{
-        const payload = (token.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/");
-        const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
-        return JSON.parse(atob(padded));
-      }} catch (_err) {{
-        return {{}};
-      }}
-    }}
-
     function updateAuthLabel() {{
-      if (!authToken) {{
+      if (!signedIn) {{
         authLabel.textContent = "Not signed in";
         return;
       }}
-      const payload = parseJwtPayload(authToken);
-      authLabel.textContent = `Signed in: ${{payload.email || payload.sub || "user"}}`;
-    }}
-
-    function authHeaders() {{
-      if (!authToken) throw new Error("Please sign in with Google first.");
-      return {{
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${{authToken}}`,
-      }};
+      authLabel.textContent = `Signed in: ${{signedInEmail || "user"}}`;
     }}
 
     function initGoogleAuth() {{
-      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
-      if (hash) {{
-        const params = new URLSearchParams(hash);
-        const idToken = params.get("id_token") || "";
-        const returnedState = params.get("state") || "";
-        const expectedState = localStorage.getItem("notes_google_oauth_state") || "";
-        if (idToken && (!expectedState || returnedState === expectedState)) {{
-          authToken = idToken;
-          localStorage.removeItem("notes_google_oauth_state");
-          updateAuthLabel();
-          ensureFirstLoginInitialized().then(() => refreshActiveView().catch(() => null));
-          history.replaceState(null, "", window.location.pathname + window.location.search);
-        }} else if (params.get("error")) {{
-          meta.textContent = `Google auth failed: ${{params.get("error")}}`;
-          history.replaceState(null, "", window.location.pathname + window.location.search);
-        }}
-      }}
-
       document.getElementById("btn-google-login").addEventListener("click", () => {{
-        const clientId = String(googleClientId || "").trim();
-        if (!clientId) {{
-          meta.textContent = "Server auth not configured: missing GOOGLE_CLIENT_ID.";
-          return;
-        }}
-        const redirectUri = String(googleRedirectUri || "").trim() || `${{window.location.origin}}/`;
-        const state = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${{Date.now()}}`;
-        localStorage.setItem("notes_google_oauth_state", state);
-        const params = new URLSearchParams({{
-          client_id: clientId,
-          redirect_uri: redirectUri,
-          response_type: "id_token",
-          scope: "openid email profile",
-          prompt: "select_account",
-          state,
-          nonce: state,
-        }});
-        window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${{params.toString()}}`;
+        const next = `${{window.location.pathname}}${{window.location.search}}`;
+        window.location.href = `/auth/google/login?next=${{encodeURIComponent(next)}}`;
       }});
 
-      document.getElementById("btn-google-logout").addEventListener("click", () => {{
-        authToken = "";
+      document.getElementById("btn-google-logout").addEventListener("click", async () => {{
+        await fetch("/auth/logout", {{
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+        }});
+        signedIn = false;
+        signedInEmail = "";
         updateAuthLabel();
         meta.textContent = "Signed out.";
+        await loadHome().catch(() => null);
       }});
 
       updateAuthLabel();
@@ -975,7 +1017,7 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
     }}
 
     async function apiGet(url) {{
-      const res = await fetch(url, {{ cache: "no-store", headers: authHeaders() }});
+      const res = await fetch(url, {{ cache: "no-store", credentials: "same-origin" }});
       if (!res.ok) {{
         const data = await res.json().catch(() => ({{}}));
         throw new Error(data.message || `${{res.status}} ${{res.statusText}}`);
@@ -986,12 +1028,21 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
     async function apiPost(url, body) {{
       const res = await fetch(url, {{
         method: "POST",
-        headers: authHeaders(),
+        credentials: "same-origin",
+        headers: {{ "Content-Type": "application/json" }},
         body: JSON.stringify(body),
       }});
       const data = await res.json().catch(() => ({{ ok: false, message: "Invalid response" }}));
       if (!res.ok || data.ok === false) throw new Error(data.message || `${{res.status}} ${{res.statusText}}`);
       return data;
+    }}
+
+    async function refreshSession() {{
+      const data = await apiGet("/api/session");
+      signedIn = Boolean(data.logged_in);
+      signedInEmail = String(data.email || "");
+      updateAuthLabel();
+      return signedIn;
     }}
 
     async function ensureFirstLoginInitialized() {{
@@ -1006,7 +1057,7 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
     }}
 
     async function refreshActiveView() {{
-      if (refreshInFlight || document.hidden || !authToken) return;
+      if (refreshInFlight || document.hidden || !signedIn) return;
       refreshInFlight = true;
       try {{
         if (currentProject) {{
@@ -1184,7 +1235,21 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
     }});
 
     async function init() {{
-      meta.textContent = "Please sign in with Google to load dashboard data.";
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("auth_error")) {{
+        meta.textContent = `Google auth failed: ${{params.get("auth_error")}}`;
+      }} else {{
+        meta.textContent = "Please sign in with Google to load dashboard data.";
+      }}
+      try {{
+        const ok = await refreshSession();
+        if (ok) {{
+          await ensureFirstLoginInitialized();
+          await refreshActiveView();
+        }}
+      }} catch (_err) {{
+        // keep signed-out state on startup
+      }}
       setInterval(refreshActiveView, AUTO_REFRESH_MS);
     }}
 
@@ -1195,20 +1260,22 @@ def build_html(initial_project: str, google_client_id: str, google_redirect_uri:
 </html>
 """
     template = template.replace("{{", "{").replace("}}", "}")
-    return (
-        template.replace("{init_json}", init_json)
-        .replace("{google_client_id_json}", google_client_id_json)
-        .replace("{google_redirect_uri_json}", google_redirect_uri_json)
-    )
+    return template.replace("{init_json}", init_json)
 
 
 def main() -> int:
     args = parse_args()
     verifier = GoogleVerifier()
-    google_redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
+    oauth_client = GoogleOAuthClient()
+    session_secret = os.environ.get("SESSION_SECRET", "").strip()
+    if not session_secret:
+        session_secret = hashlib.sha256(
+            f"{os.getpid()}-{datetime.now(timezone.utc).isoformat()}".encode("utf-8")
+        ).hexdigest()
+    session_manager = SessionManager(session_secret)
     inferred = infer_project_from_notes(args.notes)
     initial_project = pick_initial_project(args.project or inferred)
-    html = build_html(initial_project, verifier.client_id, google_redirect_uri).encode("utf-8")
+    html = build_html(initial_project).encode("utf-8")
 
     stop_event = threading.Event()
 
@@ -1277,12 +1344,61 @@ def main() -> int:
     worker.start()
 
     class Handler(BaseHTTPRequestHandler):
+        SESSION_COOKIE = "notes_session"
+        OAUTH_STATE_COOKIE = "notes_oauth_state"
+        OAUTH_NEXT_COOKIE = "notes_oauth_next"
+
+        def _secure_cookie(self) -> bool:
+            mode = os.environ.get("COOKIE_SECURE", "auto").strip().lower()
+            if mode in {"1", "true", "yes", "on"}:
+                return True
+            if mode in {"0", "false", "no", "off"}:
+                return False
+            return "https" in str(self.headers.get("X-Forwarded-Proto", "")).lower()
+
+        def _cookies(self) -> SimpleCookie:
+            jar = SimpleCookie()
+            jar.load(str(self.headers.get("Cookie", "")))
+            return jar
+
+        def _get_cookie(self, name: str) -> str:
+            jar = self._cookies()
+            morsel = jar.get(name)
+            return str(morsel.value) if morsel else ""
+
+        def _cookie_header(
+            self,
+            name: str,
+            value: str,
+            *,
+            max_age: int | None = None,
+            http_only: bool = True,
+            same_site: str = "Lax",
+        ) -> str:
+            parts = [f"{name}={value}", "Path=/", f"SameSite={same_site}"]
+            if http_only:
+                parts.append("HttpOnly")
+            if self._secure_cookie():
+                parts.append("Secure")
+            if max_age is not None:
+                parts.append(f"Max-Age={max_age}")
+            return "; ".join(parts)
+
+        def _safe_next_path(self, raw: str) -> str:
+            value = (raw or "").strip()
+            if value.startswith("/") and not value.startswith("//"):
+                return value
+            return "/"
+
         def _auth(self) -> AuthUser:
             auth = str(self.headers.get("Authorization", "")).strip()
-            if not auth.lower().startswith("bearer "):
-                raise AuthError("Missing Authorization: Bearer <google_id_token>.")
-            token = auth.split(" ", 1)[1].strip()
-            return verifier.verify(token)
+            if auth.lower().startswith("bearer "):
+                token = auth.split(" ", 1)[1].strip()
+                return verifier.verify(token)
+            session_token = self._get_cookie(self.SESSION_COOKIE)
+            if session_token:
+                return session_manager.verify(session_token)
+            raise AuthError("Please sign in with Google first.")
 
         def _user_projects_summary(self, user_id: str) -> list[dict]:
             prefix = f"u_{_safe_segment(user_id)}__"
@@ -1306,18 +1422,90 @@ def main() -> int:
             state["user_id"] = user_id
             return state
 
-        def _write_json(self, payload: dict, *, status: int = 200) -> None:
+        def _write_json(
+            self,
+            payload: dict,
+            *,
+            status: int = 200,
+            extra_headers: list[tuple[str, str]] | None = None,
+        ) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            if extra_headers:
+                for key, value in extra_headers:
+                    self.send_header(key, value)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
+        def _redirect(self, location: str, *, extra_headers: list[tuple[str, str]] | None = None) -> None:
+            self.send_response(302)
+            if extra_headers:
+                for key, value in extra_headers:
+                    self.send_header(key, value)
+            self.send_header("Location", location)
+            self.end_headers()
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
+            query = parse_qs(parsed.query)
+
+            if path == "/auth/google/login":
+                if not oauth_client.is_configured():
+                    self._write_json(
+                        {
+                            "ok": False,
+                            "message": (
+                                "Google OAuth is not configured. Set GOOGLE_CLIENT_ID, "
+                                "GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI."
+                            ),
+                        },
+                        status=500,
+                    )
+                    return
+                state = secrets.token_urlsafe(24)
+                next_path = self._safe_next_path((query.get("next") or ["/"])[0])
+                headers = [
+                    ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, state, max_age=600)),
+                    ("Set-Cookie", self._cookie_header(self.OAUTH_NEXT_COOKIE, next_path, max_age=600)),
+                ]
+                self._redirect(oauth_client.build_authorize_url(state), extra_headers=headers)
+                return
+
+            if path == "/auth/google/callback":
+                returned_state = str((query.get("state") or [""])[0]).strip()
+                expected_state = self._get_cookie(self.OAUTH_STATE_COOKIE)
+                code = str((query.get("code") or [""])[0]).strip()
+                if str((query.get("error") or [""])[0]).strip():
+                    self._redirect("/?auth_error=oauth_denied")
+                    return
+                if not returned_state or returned_state != expected_state:
+                    self._redirect("/?auth_error=state_mismatch")
+                    return
+                if not code:
+                    self._redirect("/?auth_error=missing_code")
+                    return
+                try:
+                    id_token = oauth_client.exchange_code_for_id_token(code)
+                    user = verifier.verify(id_token)
+                except Exception:
+                    self._redirect("/?auth_error=token_exchange_failed")
+                    return
+                session_token = session_manager.issue(user)
+                next_path = self._safe_next_path(self._get_cookie(self.OAUTH_NEXT_COOKIE))
+                headers = [
+                    (
+                        "Set-Cookie",
+                        self._cookie_header(self.SESSION_COOKIE, session_token, max_age=session_manager.max_age_seconds),
+                    ),
+                    ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, "", max_age=0)),
+                    ("Set-Cookie", self._cookie_header(self.OAUTH_NEXT_COOKIE, "", max_age=0)),
+                ]
+                self._redirect(next_path, extra_headers=headers)
+                return
 
             if path == "/":
                 self.send_response(200)
@@ -1334,12 +1522,20 @@ def main() -> int:
                     self.send_header("Location", "/")
                     self.end_headers()
                     return
-                project_html = build_html(project_name, verifier.client_id, google_redirect_uri).encode("utf-8")
+                project_html = build_html(project_name).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(project_html)))
                 self.end_headers()
                 self.wfile.write(project_html)
+                return
+
+            if path == "/api/session":
+                try:
+                    user = self._auth()
+                    self._write_json({"ok": True, "logged_in": True, "email": user.email, "user_id": user.user_id})
+                except AuthError:
+                    self._write_json({"ok": True, "logged_in": False, "email": ""})
                 return
 
             if path == "/api/projects":
@@ -1380,6 +1576,13 @@ def main() -> int:
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if path == "/auth/logout":
+                self._write_json(
+                    {"ok": True},
+                    extra_headers=[("Set-Cookie", self._cookie_header(self.SESSION_COOKIE, "", max_age=0))],
+                )
+                return
 
             if path == "/api/init":
                 try:

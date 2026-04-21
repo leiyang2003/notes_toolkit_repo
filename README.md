@@ -20,7 +20,7 @@ Single-service Notes Toolkit dashboard (frontend and backend in one app), with G
 
 - Frontend is embedded in `notes_todo_dashboard.py` (not separated).
 - User signs in with Google in the page.
-- Frontend sends `Authorization: Bearer <google_id_token>` to API.
+- Frontend uses server-side session cookie after OAuth redirect login.
 - Backend verifies Google token and scopes data by user:
   - project folder = `u_<google_sub>__<project_name>`
 
@@ -44,6 +44,8 @@ export NOTES_VAULT_ROOT="/your/path/notes_vault"
 
 ```bash
 export GOOGLE_CLIENT_ID="<your-google-oauth-client-id>"
+export GOOGLE_CLIENT_SECRET="<your-google-oauth-client-secret>"
+export GOOGLE_REDIRECT_URI="http://127.0.0.1:8765/auth/google/callback"
 python3 notes_todo_dashboard.py --host 127.0.0.1 --port 8765
 ```
 
@@ -77,10 +79,9 @@ This repo includes:
 
 In Google Cloud Console (OAuth client):
 
-- Add your Render app domain to **Authorized JavaScript origins**.
 - Add your callback URL to **Authorized redirect URIs**:
-  - `https://<your-render-domain>/`
-  - If you set `GOOGLE_REDIRECT_URI`, this value must exactly match that URI (including trailing slash if present).
+  - `https://<your-render-domain>/auth/google/callback`
+  - `GOOGLE_REDIRECT_URI` must exactly match one configured redirect URI.
 
 ### Runtime env vars
 
@@ -89,7 +90,9 @@ In Google Cloud Console (OAuth client):
 - `NOTES_VAULT_ROOT=/data/notes_vault`
 - `PROCESS_INTERVAL=120`
 - `GOOGLE_CLIENT_ID=<...>`
-- `GOOGLE_REDIRECT_URI=https://<your-render-domain>/` (optional but recommended)
+- `GOOGLE_CLIENT_SECRET=<...>`
+- `GOOGLE_REDIRECT_URI=https://<your-render-domain>/auth/google/callback`
+- `SESSION_SECRET=<random-long-string>` (recommended)
 
 ## Install command wrappers
 
