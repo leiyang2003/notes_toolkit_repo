@@ -628,26 +628,34 @@ def build_html(initial_project: str) -> str:
     let signedIn = false;
     let signedInEmail = "";
     const authLabel = document.getElementById("auth-label");
+    const loginBtn = document.getElementById("btn-google-login");
+    const logoutBtn = document.getElementById("btn-google-logout");
+
+    function updateAuthButtons() {{
+      loginBtn.classList.toggle("hidden", signedIn);
+      logoutBtn.classList.toggle("hidden", !signedIn);
+    }}
 
     function updateAuthLabel() {{
       if (!signedIn) {{
         authLabel.textContent = "Not signed in";
-        return;
+      }} else {{
+        authLabel.textContent = `Signed in: ${{signedInEmail || "user"}}`;
       }}
-      authLabel.textContent = `Signed in: ${{signedInEmail || "user"}}`;
+      updateAuthButtons();
     }}
 
     function initGoogleAuth() {{
-      document.getElementById("btn-google-login").addEventListener("click", () => {{
+      loginBtn.addEventListener("click", () => {{
         const next = `${{window.location.pathname}}${{window.location.search}}`;
         window.location.href = `/auth/google/login?next=${{encodeURIComponent(next)}}`;
       }});
 
-      document.getElementById("btn-google-logout").addEventListener("click", async () => {{
+      logoutBtn.addEventListener("click", async () => {{
         await fetch("/auth/logout", {{
           method: "POST",
           cache: "no-store",
-          credentials: "same-origin",
+          credentials: "include",
         }});
         signedIn = false;
         signedInEmail = "";
@@ -1548,10 +1556,15 @@ def main() -> int:
                 state = secrets.token_urlsafe(24)
                 next_url = self._safe_next_url((query.get("next") or ["/"])[0])
                 headers = [
-                    ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, state, max_age=600)),
+                    ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, state, max_age=600, same_site="Lax")),
                     (
                         "Set-Cookie",
-                        self._cookie_header(self.OAUTH_NEXT_COOKIE, quote(next_url, safe=""), max_age=600),
+                        self._cookie_header(
+                            self.OAUTH_NEXT_COOKIE,
+                            quote(next_url, safe=""),
+                            max_age=600,
+                            same_site="Lax",
+                        ),
                     ),
                 ]
                 self._redirect(oauth_client.build_authorize_url(state), extra_headers=headers)

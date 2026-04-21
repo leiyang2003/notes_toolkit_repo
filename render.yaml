@@ -28,7 +28,7 @@ services:
       - key: FRONTEND_APP_URL
         sync: false
       - key: COOKIE_SAMESITE
-        value: None
+        value: Lax
       - key: COOKIE_SECURE
         value: "true"
   - type: web

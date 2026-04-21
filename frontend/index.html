@@ -256,27 +256,35 @@
     let signedIn = false;
     let signedInEmail = "";
     const authLabel = document.getElementById("auth-label");
+    const loginBtn = document.getElementById("btn-google-login");
+    const logoutBtn = document.getElementById("btn-google-logout");
     const API_BASE = String(APP_CONFIG.backend_base || "").trim().replace(/\/+$/, "");
 
     function apiPath(path) {
       return API_BASE ? `${API_BASE}${path}` : path;
     }
 
+    function updateAuthButtons() {
+      loginBtn.classList.toggle("hidden", signedIn);
+      logoutBtn.classList.toggle("hidden", !signedIn);
+    }
+
     function updateAuthLabel() {
       if (!signedIn) {
         authLabel.textContent = "Not signed in";
-        return;
+      } else {
+        authLabel.textContent = `Signed in: ${signedInEmail || "user"}`;
       }
-      authLabel.textContent = `Signed in: ${signedInEmail || "user"}`;
+      updateAuthButtons();
     }
 
     function initGoogleAuth() {
-      document.getElementById("btn-google-login").addEventListener("click", () => {
+      loginBtn.addEventListener("click", () => {
         const next = window.location.href;
         window.location.href = `${apiPath("/auth/google/login")}?next=${encodeURIComponent(next)}`;
       });
 
-      document.getElementById("btn-google-logout").addEventListener("click", async () => {
+      logoutBtn.addEventListener("click", async () => {
         await fetch(apiPath("/auth/logout"), {
           method: "POST",
           cache: "no-store",
