@@ -1395,6 +1395,33 @@ def main() -> int:
                 parts.append(f"Max-Age={max_age}")
             return "; ".join(parts)
 
+        def _clear_cookie_headers(self, name: str, *, http_only: bool = True) -> list[tuple[str, str]]:
+            # Clear across common SameSite/Secure combinations to handle legacy cookies.
+            configured = (os.environ.get("COOKIE_SAMESITE", "Lax").strip() or "Lax").capitalize()
+            same_sites = [configured, "Lax", "None"]
+            headers: list[tuple[str, str]] = []
+            seen: set[tuple[str, bool]] = set()
+            for same_site in same_sites:
+                key = (same_site, same_site == "None")
+                if key in seen:
+                    continue
+                seen.add(key)
+                secure_options = [True] if same_site == "None" else [True, False]
+                for secure in secure_options:
+                    parts = [
+                        f"{name}=",
+                        "Path=/",
+                        f"SameSite={same_site}",
+                        "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+                        "Max-Age=0",
+                    ]
+                    if http_only:
+                        parts.append("HttpOnly")
+                    if secure:
+                        parts.append("Secure")
+                    headers.append(("Set-Cookie", "; ".join(parts)))
+            return headers
+
         def _allow_origin(self, origin: str) -> bool:
             cleaned = (origin or "").strip().rstrip("/")
             if not cleaned:
@@ -1556,9 +1583,9 @@ def main() -> int:
                         "Set-Cookie",
                         self._cookie_header(self.SESSION_COOKIE, session_token, max_age=session_manager.max_age_seconds),
                     ),
-                    ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, "", max_age=0)),
-                    ("Set-Cookie", self._cookie_header(self.OAUTH_NEXT_COOKIE, "", max_age=0)),
                 ]
+                headers.extend(self._clear_cookie_headers(self.OAUTH_STATE_COOKIE))
+                headers.extend(self._clear_cookie_headers(self.OAUTH_NEXT_COOKIE))
                 self._redirect(next_url, extra_headers=headers)
                 return
 
@@ -1631,7 +1658,11 @@ def main() -> int:
             if path == "/auth/logout":
                 self._write_json(
                     {"ok": True},
-                    extra_headers=[("Set-Cookie", self._cookie_header(self.SESSION_COOKIE, "", max_age=0))],
+                    extra_headers=(
+                        self._clear_cookie_headers(self.SESSION_COOKIE)
+                        + self._clear_cookie_headers(self.OAUTH_STATE_COOKIE)
+                        + self._clear_cookie_headers(self.OAUTH_NEXT_COOKIE)
+                    ),
                 )
                 return
 
