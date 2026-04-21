@@ -32,7 +32,7 @@ services:
       - key: COOKIE_SECURE
         value: "true"
   - type: web
-    name: notes-frontend
+    name: notes-frontend-web
     runtime: docker
     dockerfilePath: ./frontend/Dockerfile
     autoDeploy: true
