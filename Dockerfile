@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY . /app
+
+RUN chmod +x /app/scripts/run_server.sh
+
+EXPOSE 8080
+
+CMD ["/app/scripts/run_server.sh"]

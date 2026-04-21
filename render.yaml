@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: notes-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    disk:
+      name: notes-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: NOTES_VAULT_ROOT
+        value: /data/notes_vault
+      - key: HOST
+        value: 0.0.0.0
+      - key: PROCESS_INTERVAL
+        value: "120"
+      - key: CORS_ALLOW_ORIGINS
+        value: https://notes-frontend.onrender.com
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+
+  - type: static_site
+    name: notes-frontend
+    rootDir: frontend
+    staticPublishPath: .
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
