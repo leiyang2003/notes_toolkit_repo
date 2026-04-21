@@ -275,8 +275,9 @@ def unscoped_project_name(user_id: str, scoped: str) -> str | None:
     return scoped[len(prefix) :]
 
 
-def build_html(initial_project: str) -> str:
+def build_html(initial_project: str, google_client_id: str) -> str:
     init_json = json.dumps(initial_project, ensure_ascii=False)
+    google_client_id_json = json.dumps(google_client_id or "", ensure_ascii=False)
     template = """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -412,7 +413,6 @@ def build_html(initial_project: str) -> str:
       <h1>Notes Toolkit Dashboard</h1>
       <p id=\"meta\" class=\"meta\">Loading...</p>
       <div class=\"toolbar\" style=\"margin-top:8px; border-top:1px dashed var(--line); padding-top:8px;\">
-        <input id=\"google-client-id\" type=\"text\" placeholder=\"Google Client ID\" style=\"min-width:260px;\" />
         <button id=\"btn-google-login\">Google Login (Redirect)</button>
         <button id=\"btn-google-logout\">Logout</button>
         <span id=\"auth-label\" class=\"muted\">Not signed in</span>
@@ -484,6 +484,7 @@ def build_html(initial_project: str) -> str:
 
   <script>
     const initialProject = {init_json};
+    const googleClientId = {google_client_id_json};
     const meta = document.getElementById("meta");
     const currentProjectLabel = document.getElementById("current-project");
     const homeView = document.getElementById("home-view");
@@ -557,13 +558,6 @@ def build_html(initial_project: str) -> str:
     }}
 
     function initGoogleAuth() {{
-      const clientInput = document.getElementById("google-client-id");
-      try {{
-        clientInput.value = localStorage.getItem("notes_google_client_id") || "";
-      }} catch (_err) {{
-        clientInput.value = "";
-      }}
-
       const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
       if (hash) {{
         const params = new URLSearchParams(hash);
@@ -583,15 +577,10 @@ def build_html(initial_project: str) -> str:
       }}
 
       document.getElementById("btn-google-login").addEventListener("click", () => {{
-        const clientId = String(clientInput.value || "").trim();
+        const clientId = String(googleClientId || "").trim();
         if (!clientId) {{
-          meta.textContent = "Please input Google Client ID.";
+          meta.textContent = "Server auth not configured: missing GOOGLE_CLIENT_ID.";
           return;
-        }}
-        try {{
-          localStorage.setItem("notes_google_client_id", clientId);
-        }} catch (_err) {{
-          // ignore storage failures
         }}
         const redirectUri = `${{window.location.origin}}${{window.location.pathname}}`;
         const state = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${{Date.now()}}`;
@@ -1204,7 +1193,9 @@ def build_html(initial_project: str) -> str:
 </html>
 """
     template = template.replace("{{", "{").replace("}}", "}")
-    return template.replace("{init_json}", init_json)
+    return (
+        template.replace("{init_json}", init_json).replace("{google_client_id_json}", google_client_id_json)
+    )
 
 
 def main() -> int:
@@ -1212,7 +1203,7 @@ def main() -> int:
     verifier = GoogleVerifier()
     inferred = infer_project_from_notes(args.notes)
     initial_project = pick_initial_project(args.project or inferred)
-    html = build_html(initial_project).encode("utf-8")
+    html = build_html(initial_project, verifier.client_id).encode("utf-8")
 
     stop_event = threading.Event()
 
@@ -1338,7 +1329,7 @@ def main() -> int:
                     self.send_header("Location", "/")
                     self.end_headers()
                     return
-                project_html = build_html(project_name).encode("utf-8")
+                project_html = build_html(project_name, verifier.client_id).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(project_html)))

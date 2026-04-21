@@ -53,7 +53,6 @@ python3 notes_todo_dashboard.py --host 127.0.0.1 --port 8765
 
 3) In UI:
 
-- Enter `Google Client ID`
 - Click `Google Login (Redirect)` and complete Google authorization
 - Sign in, then use dashboard as usual
 
