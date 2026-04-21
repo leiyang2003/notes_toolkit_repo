@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 THIS_DIR = Path(__file__).resolve().parent
@@ -364,6 +364,15 @@ def unscoped_project_name(user_id: str, scoped: str) -> str | None:
     if not scoped.startswith(prefix):
         return None
     return scoped[len(prefix) :]
+
+
+def _parse_origin_list(raw: str) -> set[str]:
+    values = set()
+    for part in (raw or "").split(","):
+        origin = part.strip().rstrip("/")
+        if origin:
+            values.add(origin)
+    return values
 
 
 def build_html(initial_project: str) -> str:
@@ -1273,9 +1282,10 @@ def main() -> int:
             f"{os.getpid()}-{datetime.now(timezone.utc).isoformat()}".encode("utf-8")
         ).hexdigest()
     session_manager = SessionManager(session_secret)
+    frontend_origins = _parse_origin_list(os.environ.get("FRONTEND_ORIGIN", ""))
+    frontend_app_url = os.environ.get("FRONTEND_APP_URL", "").strip()
     inferred = infer_project_from_notes(args.notes)
     initial_project = pick_initial_project(args.project or inferred)
-    html = build_html(initial_project).encode("utf-8")
 
     stop_event = threading.Event()
 
@@ -1373,9 +1383,10 @@ def main() -> int:
             *,
             max_age: int | None = None,
             http_only: bool = True,
-            same_site: str = "Lax",
+            same_site: str | None = None,
         ) -> str:
-            parts = [f"{name}={value}", "Path=/", f"SameSite={same_site}"]
+            chosen_same_site = (same_site or os.environ.get("COOKIE_SAMESITE", "Lax")).strip() or "Lax"
+            parts = [f"{name}={value}", "Path=/", f"SameSite={chosen_same_site}"]
             if http_only:
                 parts.append("HttpOnly")
             if self._secure_cookie():
@@ -1384,11 +1395,41 @@ def main() -> int:
                 parts.append(f"Max-Age={max_age}")
             return "; ".join(parts)
 
-        def _safe_next_path(self, raw: str) -> str:
+        def _allow_origin(self, origin: str) -> bool:
+            cleaned = (origin or "").strip().rstrip("/")
+            if not cleaned:
+                return False
+            if frontend_origins:
+                return cleaned in frontend_origins
+            host = str(self.headers.get("Host", "")).strip()
+            scheme = "https" if self._secure_cookie() else "http"
+            same_origin = f"{scheme}://{host}".rstrip("/")
+            return cleaned == same_origin
+
+        def _cors_headers(self) -> list[tuple[str, str]]:
+            origin = str(self.headers.get("Origin", "")).strip().rstrip("/")
+            if self._allow_origin(origin):
+                return [
+                    ("Access-Control-Allow-Origin", origin),
+                    ("Access-Control-Allow-Credentials", "true"),
+                    ("Vary", "Origin"),
+                ]
+            return []
+
+        def _safe_next_url(self, raw: str) -> str:
             value = (raw or "").strip()
             if value.startswith("/") and not value.startswith("//"):
                 return value
+            parsed = urlparse(value)
+            if parsed.scheme in {"http", "https"} and parsed.netloc:
+                origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+                if self._allow_origin(origin):
+                    return value
             return "/"
+
+        def _append_query(self, url: str, key: str, value: str) -> str:
+            sep = "&" if "?" in url else "?"
+            return f"{url}{sep}{key}={quote(value, safe='')}"
 
         def _auth(self) -> AuthUser:
             auth = str(self.headers.get("Authorization", "")).strip()
@@ -1433,6 +1474,8 @@ def main() -> int:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            for key, value in self._cors_headers():
+                self.send_header(key, value)
             if extra_headers:
                 for key, value in extra_headers:
                     self.send_header(key, value)
@@ -1446,6 +1489,15 @@ def main() -> int:
                 for key, value in extra_headers:
                     self.send_header(key, value)
             self.send_header("Location", location)
+            self.end_headers()
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            self.send_response(204)
+            for key, value in self._cors_headers():
+                self.send_header(key, value)
+            self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type,Authorization")
+            self.send_header("Access-Control-Max-Age", "600")
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
@@ -1467,10 +1519,13 @@ def main() -> int:
                     )
                     return
                 state = secrets.token_urlsafe(24)
-                next_path = self._safe_next_path((query.get("next") or ["/"])[0])
+                next_url = self._safe_next_url((query.get("next") or ["/"])[0])
                 headers = [
                     ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, state, max_age=600)),
-                    ("Set-Cookie", self._cookie_header(self.OAUTH_NEXT_COOKIE, next_path, max_age=600)),
+                    (
+                        "Set-Cookie",
+                        self._cookie_header(self.OAUTH_NEXT_COOKIE, quote(next_url, safe=""), max_age=600),
+                    ),
                 ]
                 self._redirect(oauth_client.build_authorize_url(state), extra_headers=headers)
                 return
@@ -1479,23 +1534,23 @@ def main() -> int:
                 returned_state = str((query.get("state") or [""])[0]).strip()
                 expected_state = self._get_cookie(self.OAUTH_STATE_COOKIE)
                 code = str((query.get("code") or [""])[0]).strip()
+                next_url = self._safe_next_url(unquote(self._get_cookie(self.OAUTH_NEXT_COOKIE)))
                 if str((query.get("error") or [""])[0]).strip():
-                    self._redirect("/?auth_error=oauth_denied")
+                    self._redirect(self._append_query(next_url, "auth_error", "oauth_denied"))
                     return
                 if not returned_state or returned_state != expected_state:
-                    self._redirect("/?auth_error=state_mismatch")
+                    self._redirect(self._append_query(next_url, "auth_error", "state_mismatch"))
                     return
                 if not code:
-                    self._redirect("/?auth_error=missing_code")
+                    self._redirect(self._append_query(next_url, "auth_error", "missing_code"))
                     return
                 try:
                     id_token = oauth_client.exchange_code_for_id_token(code)
                     user = verifier.verify(id_token)
                 except Exception:
-                    self._redirect("/?auth_error=token_exchange_failed")
+                    self._redirect(self._append_query(next_url, "auth_error", "token_exchange_failed"))
                     return
                 session_token = session_manager.issue(user)
-                next_path = self._safe_next_path(self._get_cookie(self.OAUTH_NEXT_COOKIE))
                 headers = [
                     (
                         "Set-Cookie",
@@ -1504,30 +1559,26 @@ def main() -> int:
                     ("Set-Cookie", self._cookie_header(self.OAUTH_STATE_COOKIE, "", max_age=0)),
                     ("Set-Cookie", self._cookie_header(self.OAUTH_NEXT_COOKIE, "", max_age=0)),
                 ]
-                self._redirect(next_path, extra_headers=headers)
+                self._redirect(next_url, extra_headers=headers)
                 return
 
             if path == "/":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(html)))
-                self.end_headers()
-                self.wfile.write(html)
+                payload: dict[str, object] = {
+                    "ok": True,
+                    "service": "notes-toolkit-backend",
+                    "auth": {
+                        "google_oauth_configured": oauth_client.is_configured(),
+                        "session_cookie": self.SESSION_COOKIE,
+                    },
+                }
+                if frontend_app_url:
+                    payload["frontend_app_url"] = frontend_app_url
+                self._write_json(payload)
                 return
 
             if path.startswith("/project/"):
-                project_name = unquote(path[len("/project/") :]).strip("/")
-                if not project_name:
-                    self.send_response(302)
-                    self.send_header("Location", "/")
-                    self.end_headers()
-                    return
-                project_html = build_html(project_name).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(project_html)))
-                self.end_headers()
-                self.wfile.write(project_html)
+                target = frontend_app_url or "/"
+                self._redirect(target)
                 return
 
             if path == "/api/session":

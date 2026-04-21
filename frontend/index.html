@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Notes Toolkit Dashboard</title>
   <style>
     :root {
@@ -111,7 +111,7 @@
     .status-promoted, .status-done { color: var(--ok); }
     .forms { display: grid; gap: 8px; }
     .inline { display: flex; gap: 8px; flex-wrap: wrap; }
-    input[type=\"text\"], input[type=\"number\"] {
+    input[type="text"], input[type="number"] {
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 7px;
@@ -126,72 +126,76 @@
       .right-stack { grid-template-rows: auto auto; height: auto; }
     }
   </style>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
-  <div class=\"wrap\">
-    <div class=\"header\">
+  <div class="wrap">
+    <div class="header">
       <h1>Notes Toolkit Dashboard</h1>
-      <p id=\"meta\" class=\"meta\">Loading...</p>
-      <div class=\"toolbar\">
-        <button id=\"btn-global\" class=\"primary\">Global View</button>
-        <button id=\"btn-project\">Current Project</button>
-        <button id=\"btn-refresh\">Refresh</button>
-        <button id=\"btn-notes\">Notes</button>
-        <span id=\"current-project\" class=\"muted\"></span>
+      <p id="meta" class="meta">Loading...</p>
+      <div class="toolbar" style="margin-top:8px; border-top:1px dashed var(--line); padding-top:8px;">
+        <button id="btn-google-login">Google Login (Redirect)</button>
+        <button id="btn-google-logout">Logout</button>
+        <span id="auth-label" class="muted">Not signed in</span>
+      </div>
+      <div class="toolbar">
+        <button id="btn-global" class="primary">Global View</button>
+        <button id="btn-project">Current Project</button>
+        <button id="btn-refresh">Refresh</button>
+        <button id="btn-notes">Notes</button>
+        <span id="current-project" class="muted"></span>
       </div>
     </div>
 
-    <div id=\"home-view\" class=\"grid\">
-      <section class=\"card full\">
-        <h2 class=\"title\">Projects</h2>
-        <div id=\"project-list\" class=\"list\"></div>
+    <div id="home-view" class="grid">
+      <section class="card full">
+        <h2 class="title">Projects</h2>
+        <div id="project-list" class="list"></div>
       </section>
     </div>
 
-    <div id=\"project-view\" class=\"grid hidden\">
-      <div class=\"top-grid\">
-        <section id=\"open-todos-card\" class=\"card\">
-          <h2 class=\"title\">Open Todos <span id=\"todo-count\" class=\"muted\"></span></h2>
-          <div id=\"todo-list\" class=\"list\"></div>
+    <div id="project-view" class="grid hidden">
+      <div class="top-grid">
+        <section id="open-todos-card" class="card">
+          <h2 class="title">Open Todos <span id="todo-count" class="muted"></span></h2>
+          <div id="todo-list" class="list"></div>
         </section>
 
-        <div class=\"right-stack\">
-          <section class=\"card stack-card\">
-            <h2 class=\"title\">Potential <span id=\"pending-count\" class=\"muted\"></span></h2>
-            <div id=\"potential-list\" class=\"list\"></div>
+        <div class="right-stack">
+          <section class="card stack-card">
+            <h2 class="title">Potential <span id="pending-count" class="muted"></span></h2>
+            <div id="potential-list" class="list"></div>
           </section>
-          <section class=\"card stack-card\">
-            <h2 class=\"title\">Long-term Todos <span id=\"long-term-count\" class=\"muted\"></span></h2>
-            <div id=\"long-term-list\" class=\"list\"></div>
+          <section class="card stack-card">
+            <h2 class="title">Long-term Todos <span id="long-term-count" class="muted"></span></h2>
+            <div id="long-term-list" class="list"></div>
           </section>
         </div>
       </div>
 
-      <section id=\"notes-card\" class=\"card full hidden\">
-        <h2 class=\"title\">Notes Entries <span id=\"notes-count\" class=\"muted\"></span></h2>
-        <div id=\"notes-list\" class=\"list\"></div>
+      <section id="notes-card" class="card full hidden">
+        <h2 class="title">Notes Entries <span id="notes-count" class="muted"></span></h2>
+        <div id="notes-list" class="list"></div>
       </section>
 
-      <section class=\"card full\">
-        <h2 class=\"title\">Actions</h2>
-        <div class=\"forms\">
-          <div class=\"inline\">
-            <input id=\"note-input\" type=\"text\" placeholder=\"add note text\" />
-            <button id=\"add-note\">Add Note</button>
+      <section class="card full">
+        <h2 class="title">Actions</h2>
+        <div class="forms">
+          <div class="inline">
+            <input id="note-input" type="text" placeholder="add note text" />
+            <button id="add-note">Add Note</button>
           </div>
-          <div class=\"inline\">
-            <input id=\"todo-input\" type=\"text\" placeholder=\"add todo text\" />
-            <button id=\"add-todo\">Add Todo</button>
+          <div class="inline">
+            <input id="todo-input" type="text" placeholder="add todo text" />
+            <button id="add-todo">Add Todo</button>
           </div>
-          <div class=\"inline\">
-            <input id=\"approve-id\" type=\"number\" min=\"1\" placeholder=\"pending id\" />
-            <button id=\"approve-potential\">Approve Potential</button>
-            <button id=\"reject-potential\">Reject Potential</button>
+          <div class="inline">
+            <input id="approve-id" type="number" min="1" placeholder="pending id" />
+            <button id="approve-potential">Approve Potential</button>
+            <button id="reject-potential">Reject Potential</button>
           </div>
-          <div class=\"inline\">
-            <input id=\"complete-id\" type=\"number\" min=\"1\" placeholder=\"todo id\" />
-            <button id=\"complete-todo\">Complete Todo</button>
+          <div class="inline">
+            <input id="complete-id" type="number" min="1" placeholder="todo id" />
+            <button id="complete-todo">Complete Todo</button>
           </div>
         </div>
       </section>
@@ -199,6 +203,13 @@
   </div>
 
   <script>
+    window.__NOTES_CONFIG__ = __NOTES_CONFIG_JSON__;
+  </script>
+
+  <script>
+    const APP_CONFIG = (window.__NOTES_CONFIG__ && typeof window.__NOTES_CONFIG__ === "object")
+      ? window.__NOTES_CONFIG__
+      : {};
     const initialProject = "";
     const meta = document.getElementById("meta");
     const currentProjectLabel = document.getElementById("current-project");
@@ -242,43 +253,43 @@
     const expandedTodoKeys = new Set();
     const expandedNoteKeys = new Set();
     const AUTO_REFRESH_MS = 2000;
+    let signedIn = false;
+    let signedInEmail = "";
+    const authLabel = document.getElementById("auth-label");
+    const API_BASE = String(APP_CONFIG.backend_base || "").trim().replace(/\/+$/, "");
 
+    function apiPath(path) {
+      return API_BASE ? `${API_BASE}${path}` : path;
+    }
 
-    function initAuthConfig() {
-      const baseInput = document.getElementById("backend-base");
-      const clientInput = document.getElementById("google-client-id");
-      baseInput.value = localStorage.getItem("notes_backend_base") || "";
-      clientInput.value = localStorage.getItem("notes_google_client_id") || "";
+    function updateAuthLabel() {
+      if (!signedIn) {
+        authLabel.textContent = "Not signed in";
+        return;
+      }
+      authLabel.textContent = `Signed in: ${signedInEmail || "user"}`;
+    }
 
-      document.getElementById("btn-google-init").addEventListener("click", () => {
-        const clientId = clientInput.value.trim();
-        if (!clientId) {
-          meta.textContent = "Please input Google Client ID.";
-          return;
-        }
-        localStorage.setItem("notes_google_client_id", clientId);
-        if (!window.google || !google.accounts || !google.accounts.id) {
-          meta.textContent = "Google Sign-In SDK not ready yet.";
-          return;
-        }
-        google.accounts.id.initialize({
-          client_id: clientId,
-          callback: (resp) => {
-            authToken = resp.credential || "";
-            try {
-              const payload = JSON.parse(atob((authToken.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/")));
-              authLabel.textContent = `Signed in: ${payload.email || payload.sub}`;
-            } catch (_err) {
-              authLabel.textContent = "Signed in";
-            }
-            refreshActiveView().catch(() => null);
-          }
-        });
-        const holder = document.getElementById("google-signin");
-        holder.innerHTML = "";
-        google.accounts.id.renderButton(holder, { theme: "outline", size: "small" });
-        authLabel.textContent = "Google Sign-In ready";
+    function initGoogleAuth() {
+      document.getElementById("btn-google-login").addEventListener("click", () => {
+        const next = window.location.href;
+        window.location.href = `${apiPath("/auth/google/login")}?next=${encodeURIComponent(next)}`;
       });
+
+      document.getElementById("btn-google-logout").addEventListener("click", async () => {
+        await fetch(apiPath("/auth/logout"), {
+          method: "POST",
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        signedIn = false;
+        signedInEmail = "";
+        updateAuthLabel();
+        meta.textContent = "Signed out.";
+        await loadHome().catch(() => null);
+      });
+
+      updateAuthLabel();
     }
 
     function esc(s) {
@@ -289,7 +300,7 @@
     }
 
     function escapeRegExp(s) {
-      return String(s).replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+      return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
     function boldImportantNouns(text) {
@@ -381,7 +392,7 @@
       const wrapStrong = (value) => `<strong>${value}</strong>`;
       const replaceOutsideStrong = (input, pattern, replacer) => {
         return String(input)
-          .split(/(<strong>.*?<\\/strong>)/g)
+          .split(/(<strong>.*?<\/strong>)/g)
           .map((seg) => (seg.startsWith("<strong>") ? seg : seg.replace(pattern, replacer)))
           .join("");
       };
@@ -390,12 +401,12 @@
         .slice()
         .sort((a, b) => b.length - a.length)
         .forEach((phrase) => {
-          const re = new RegExp(`\\\\b(${escapeRegExp(phrase)})\\\\b`, "gi");
+          const re = new RegExp(`\\b(${escapeRegExp(phrase)})\\b`, "gi");
           out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
         });
 
       englishWords.forEach((word) => {
-        const re = new RegExp(`\\\\b(${escapeRegExp(word)})\\\\b`, "gi");
+        const re = new RegExp(`\\b(${escapeRegExp(word)})\\b`, "gi");
         out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
       });
 
@@ -406,7 +417,7 @@
 
       knownNames.forEach((name) => {
         if (/^[A-Za-z]/.test(name)) {
-          const re = new RegExp(`\\\\b(${escapeRegExp(name)})\\\\b`, "gi");
+          const re = new RegExp(`\\b(${escapeRegExp(name)})\\b`, "gi");
           out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
           return;
         }
@@ -416,11 +427,11 @@
 
       out = replaceOutsideStrong(
         out,
-        /\\b([A-Za-z][A-Za-z0-9_-]{1,24})'s\\b/g,
+        /\b([A-Za-z][A-Za-z0-9_-]{1,24})'s\b/g,
         (full, token) => `${wrapStrong(token)}'s`
       );
 
-      out = replaceOutsideStrong(out, /\\b([A-Z][a-z]{2,24})\\b/g, (full, token) => {
+      out = replaceOutsideStrong(out, /\b([A-Z][a-z]{2,24})\b/g, (full, token) => {
         const lower = token.toLowerCase();
         if (capitalizedStopWords.has(lower)) {
           return full;
@@ -430,13 +441,13 @@
 
       out = replaceOutsideStrong(
         out,
-        /([\\u4e00-\\u9fff]{2,4})(?=的(?:朋友|同学|同事|角色|人设|Profile|profile))/g,
+        /([\u4e00-\u9fff]{2,4})(?=的(?:朋友|同学|同事|角色|人设|Profile|profile))/g,
         (m, token) => wrapStrong(token)
       );
 
       out = replaceOutsideStrong(
         out,
-        /([\\u4e00-\\u9fff]{2,4})(?=要的Profile)/g,
+        /([\u4e00-\u9fff]{2,4})(?=要的Profile)/g,
         (m, token) => wrapStrong(token)
       );
 
@@ -445,10 +456,10 @@
 
     function stripTodoMeta(text) {
       return String(text || "")
-        .replace(/\\[\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}\\s+\\([^\\]]+\\)\\]\\s*/g, "")
-        .replace(/^\\[(?:RECOVERED|REOPENED)[^\\]]*\\]\\s*/i, "")
-        .replace(/^-\\s*\\[(?: |x|X)\\]\\s*/g, "")
-        .replace(/\\s+/g, " ")
+        .replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+\([^\]]+\)\]\s*/g, "")
+        .replace(/^\[(?:RECOVERED|REOPENED)[^\]]*\]\s*/i, "")
+        .replace(/^-\s*\[(?: |x|X)\]\s*/g, "")
+        .replace(/\s+/g, " ")
         .trim();
     }
 
@@ -460,17 +471,17 @@
 
     function stripNoteMeta(text) {
       return String(text || "")
-        .replace(/^\\[\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}\\s+\\([^\\]]+\\)\\]\\s*/g, "")
-        .replace(/^\\[(?:RECOVERED|REOPENED)[^\\]]*\\]\\s*/i, "")
-        .replace(/\\s+/g, " ")
+        .replace(/^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+\([^\]]+\)\]\s*/g, "")
+        .replace(/^\[(?:RECOVERED|REOPENED)[^\]]*\]\s*/i, "")
+        .replace(/\s+/g, " ")
         .trim();
     }
 
     function isRecoveredEntry(text) {
       const withoutTs = String(text || "")
-        .replace(/^\\[\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}\\s+\\([^\\]]+\\)\\]\\s*/g, "")
+        .replace(/^\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+\([^\]]+\)\]\s*/g, "")
         .trim();
-      return /^\\[(?:RECOVERED|REOPENED)\\b/i.test(withoutTs);
+      return /^\[(?:RECOVERED|REOPENED)\b/i.test(withoutTs);
     }
 
     function todoKey(todo) {
@@ -647,27 +658,8 @@
       node.appendChild(div);
     }
 
-    let authToken = "";
-    const authLabel = document.getElementById("auth-label");
-
-    function getBackendBase() {
-      const value = String(document.getElementById("backend-base").value || "").trim();
-      if (!value) throw new Error("Please set Backend URL first.");
-      localStorage.setItem("notes_backend_base", value);
-      return value.replace(/\/+$/, "");
-    }
-
-    function authHeaders() {
-      if (!authToken) throw new Error("Please sign in with Google first.");
-      return {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${authToken}`,
-      };
-    }
-
     async function apiGet(url) {
-      const base = getBackendBase();
-      const res = await fetch(`${base}${url}`, { cache: "no-store", headers: authHeaders() });
+      const res = await fetch(apiPath(url), { cache: "no-store", credentials: "include" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.message || `${res.status} ${res.statusText}`);
@@ -676,10 +668,10 @@
     }
 
     async function apiPost(url, body) {
-      const base = getBackendBase();
-      const res = await fetch(`${base}${url}`, {
+      const res = await fetch(apiPath(url), {
         method: "POST",
-        headers: authHeaders(),
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({ ok: false, message: "Invalid response" }));
@@ -687,8 +679,27 @@
       return data;
     }
 
+    async function refreshSession() {
+      const data = await apiGet("/api/session");
+      signedIn = Boolean(data.logged_in);
+      signedInEmail = String(data.email || "");
+      updateAuthLabel();
+      return signedIn;
+    }
+
+    async function ensureFirstLoginInitialized() {
+      try {
+        const data = await apiPost("/api/init", { project_name: "home" });
+        if (data.initialized) {
+          meta.textContent = `Initialized first project: ${data.project}`;
+        }
+      } catch (err) {
+        meta.textContent = `Init check failed: ${err.message || err}`;
+      }
+    }
+
     async function refreshActiveView() {
-      if (refreshInFlight || document.hidden || !authToken) return;
+      if (refreshInFlight || document.hidden || !signedIn) return;
       refreshInFlight = true;
       try {
         if (currentProject) {
@@ -866,12 +877,27 @@
     });
 
     async function init() {
-      meta.textContent = "Please sign in with Google to load dashboard data.";
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("auth_error")) {
+        meta.textContent = `Google auth failed: ${params.get("auth_error")}`;
+      } else {
+        meta.textContent = "Please sign in with Google to load dashboard data.";
+      }
+      try {
+        const ok = await refreshSession();
+        if (ok) {
+          await ensureFirstLoginInitialized();
+          await refreshActiveView();
+        }
+      } catch (_err) {
+        // keep signed-out state on startup
+      }
       setInterval(refreshActiveView, AUTO_REFRESH_MS);
     }
 
-    initAuthConfig();
+    initGoogleAuth();
     init();
   </script>
 </body>
 </html>
+

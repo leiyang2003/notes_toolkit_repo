@@ -1,6 +1,6 @@
 # Notes Toolkit
 
-Single-service Notes Toolkit dashboard (frontend and backend in one app), with Google Sign-In and Render deployment support.
+Split frontend/backend Notes Toolkit with Google OAuth redirect login and per-user local-file storage.
 
 ## Included
 
@@ -18,10 +18,12 @@ Single-service Notes Toolkit dashboard (frontend and backend in one app), with G
 
 ## Auth model
 
-- Frontend is embedded in `notes_todo_dashboard.py` (not separated).
-- User signs in with Google in the page.
-- Frontend uses server-side session cookie after OAuth redirect login.
-- Backend verifies Google token and scopes data by user:
+- Frontend is dynamic service: `frontend/app.py` (serves `frontend/index.html` with runtime config).
+- Backend is API/Auth service: `notes_todo_dashboard.py`.
+- Login flow is server-side OAuth:
+  - Frontend redirects to `/auth/google/login`.
+  - Backend handles `/auth/google/callback`, then sets session cookie.
+- Backend scopes data by user:
   - project folder = `u_<google_sub>__<project_name>`
 
 ## Data Layout
@@ -38,61 +40,78 @@ Override vault root:
 export NOTES_VAULT_ROOT="/your/path/notes_vault"
 ```
 
-## Local run
+## Local run (split)
 
-1) Start dashboard server:
+1) Start backend:
 
 ```bash
 export GOOGLE_CLIENT_ID="<your-google-oauth-client-id>"
 export GOOGLE_CLIENT_SECRET="<your-google-oauth-client-secret>"
 export GOOGLE_REDIRECT_URI="http://127.0.0.1:8765/auth/google/callback"
+export FRONTEND_ORIGIN="http://127.0.0.1:5500"
+export COOKIE_SAMESITE="Lax"
 python3 notes_todo_dashboard.py --host 127.0.0.1 --port 8765
 ```
 
-2) Open:
+2) Start frontend dynamic server:
 
-`http://127.0.0.1:8765`
+```bash
+export BACKEND_BASE_URL="http://127.0.0.1:8765"
+HOST=127.0.0.1 PORT=5500 python3 frontend/app.py
+```
 
-3) In UI:
+3) Open:
 
-- Click `Google Login (Redirect)` and complete Google authorization
-- Sign in, then use dashboard as usual
+`http://127.0.0.1:5500`
 
-## Render deployment (single service)
+4) In UI:
 
-This repo includes:
+- Set backend URL to `http://127.0.0.1:8765`
+- Click `Google Login (Redirect)`
+- Complete Google authorization and return
 
-- `Dockerfile`
-- `scripts/run_server.sh`
-- `render.yaml`
+## Render deployment (split frontend/backend)
 
-### Deploy via Blueprint
+### Backend service (this repo root)
 
-1. Push this branch to GitHub.
-2. In Render: `New` -> `Blueprint` -> select this repository.
-3. Render creates web service `notes-dashboard`.
-4. In service env vars, set:
-   - `GOOGLE_CLIENT_ID=<your-google-oauth-client-id>`
-5. Ensure persistent disk is attached at `/data` (already in `render.yaml`).
+Use existing `render.yaml` service `notes-dashboard`.
+
+Required env vars:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REDIRECT_URI=https://<backend-domain>/auth/google/callback`
+- `SESSION_SECRET=<random-long-string>`
+- `FRONTEND_ORIGIN=https://<frontend-domain>`
+- `FRONTEND_APP_URL=https://<frontend-domain>`
+- `COOKIE_SAMESITE=None`
+- `COOKIE_SECURE=true`
+
+Persistent disk:
+
+- mount `/data` (already set)
+- `NOTES_VAULT_ROOT=/data/notes_vault`
+
+### Frontend service
+
+Deploy `frontend/Dockerfile` as a separate Render web service.
+
+Frontend env vars:
+
+- `BACKEND_BASE_URL=https://<backend-domain>`
+
+After deploy:
+
+- Open frontend URL
+- Login through Google redirect
 
 ### Required Google OAuth config
 
 In Google Cloud Console (OAuth client):
 
 - Add your callback URL to **Authorized redirect URIs**:
-  - `https://<your-render-domain>/auth/google/callback`
+  - `https://<backend-domain>/auth/google/callback`
   - `GOOGLE_REDIRECT_URI` must exactly match one configured redirect URI.
-
-### Runtime env vars
-
-- `PORT` (injected by Render)
-- `HOST=0.0.0.0`
-- `NOTES_VAULT_ROOT=/data/notes_vault`
-- `PROCESS_INTERVAL=120`
-- `GOOGLE_CLIENT_ID=<...>`
-- `GOOGLE_CLIENT_SECRET=<...>`
-- `GOOGLE_REDIRECT_URI=https://<your-render-domain>/auth/google/callback`
-- `SESSION_SECRET=<random-long-string>` (recommended)
 
 ## Install command wrappers
 
