@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: notes-backend
+    name: notes-dashboard
     runtime: docker
     dockerfilePath: ./Dockerfile
     autoDeploy: true
@@ -15,17 +15,5 @@ services:
         value: 0.0.0.0
       - key: PROCESS_INTERVAL
         value: "120"
-      - key: CORS_ALLOW_ORIGINS
-        value: https://notes-frontend.onrender.com
       - key: GOOGLE_CLIENT_ID
         sync: false
-
-  - type: web
-    runtime: static
-    name: notes-frontend
-    rootDir: frontend
-    staticPublishPath: .
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Notes Toolkit HTTP API server (file-backed, Google Sign-In auth)."""
+"""Local web dashboard for Notes Toolkit v2 (home + project views)."""
 
 from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -25,40 +26,32 @@ from notes_app import (
     add_note,
     add_todo,
     all_projects_summary,
+    append_behavior_log,
     approve_potential,
     complete_todo,
+    default_project_name,
     dismiss_note,
+    list_projects,
     mark_todo_long_term,
     process_potential_todos,
     project_paths,
     project_state,
     reject_potential,
+    snapshot_notes,
 )
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Serve Notes Toolkit API.")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--process-interval", type=int, default=120, help="Periodic potential processor interval.")
-    parser.add_argument("--cors-origins", default="", help="Comma-separated CORS allowlist. Falls back to env CORS_ALLOW_ORIGINS.")
-    return parser.parse_args()
+DATE_HEADING_RE = re.compile(r"^##\s+\d{4}-\d{2}-\d{2}\s*$")
 
 
-def _safe_segment(value: str) -> str:
-    clean = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
-    return clean.strip("._-") or "anon"
+@dataclass(frozen=True)
+class AuthUser:
+    user_id: str
+    email: str
 
 
-def scoped_project_name(user_id: str, project_name: str) -> str:
-    return f"u_{_safe_segment(user_id)}__{project_name.strip()}"
-
-
-def unscoped_project_name(user_id: str, scoped: str) -> str | None:
-    prefix = f"u_{_safe_segment(user_id)}__"
-    if not scoped.startswith(prefix):
-        return None
-    return scoped[len(prefix) :]
+class AuthError(Exception):
+    pass
 
 
 def _jwt_payload_unsafe(token: str) -> dict:
@@ -72,17 +65,6 @@ def _jwt_payload_unsafe(token: str) -> dict:
         return json.loads(raw.decode("utf-8"))
     except Exception:
         return {}
-
-
-@dataclass(frozen=True)
-class AuthUser:
-    user_id: str
-    email: str
-    provider: str
-
-
-class AuthError(Exception):
-    pass
 
 
 class GoogleVerifier:
@@ -126,7 +108,7 @@ class GoogleVerifier:
             if not sub:
                 raise AuthError("Invalid token payload (missing sub).")
             exp = float(payload.get("exp", datetime.now().timestamp() + 300))
-            user = AuthUser(user_id=sub, email=str(payload.get("email", "")), provider="google")
+            user = AuthUser(user_id=sub, email=str(payload.get("email", "")))
             self._cache_set(token, user, exp)
             return user
 
@@ -148,70 +130,1103 @@ class GoogleVerifier:
         if self.client_id and audience != self.client_id:
             raise AuthError("Invalid Google token audience.")
         exp = float(data.get("exp", datetime.now().timestamp() + 300))
-        user = AuthUser(
-            user_id=sub,
-            email=str(data.get("email", "")).strip(),
-            provider="google",
-        )
+        user = AuthUser(user_id=sub, email=str(data.get("email", "")).strip())
         self._cache_set(token, user, exp)
         return user
 
 
-def run_action(paths, *, action: str, payload: dict, actor: str):
-    if action == "add_note":
-        return add_note(paths, str(payload.get("text", "")), actor=actor)
-    if action == "add_todo":
-        return add_todo(paths, str(payload.get("text", "")), actor=actor)
-    if action == "approve_potential":
-        return approve_potential(paths, int(payload.get("id")), actor=actor)
-    if action == "reject_potential":
-        return reject_potential(paths, int(payload.get("id")), actor=actor)
-    if action == "complete_todo":
-        return complete_todo(paths, int(payload.get("id")), actor=actor)
-    if action == "mark_long_term_todo":
-        return mark_todo_long_term(paths, int(payload.get("id")), actor=actor)
-    if action == "dismiss_note":
-        return dismiss_note(paths, int(payload.get("id")), actor=actor)
-    raise ValueError(f"Unsupported action: {action}")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Serve Notes Toolkit dashboard (home + project).")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--project", default="", help="Initial project. Default: cwd folder name if exists.")
+    parser.add_argument("--notes", default="", help="Legacy NOTES.md path. Used only to infer initial project.")
+    parser.add_argument("--process-interval", type=int, default=120, help="Background processing interval in seconds.")
+    return parser.parse_args()
 
 
-def user_projects_summary(user_id: str) -> list[dict]:
+def pick_initial_project(explicit: str) -> str:
+    if explicit.strip():
+        return explicit.strip()
+    candidate = default_project_name()
+    existing = {p.name for p in list_projects(create_root=True)}
+    return candidate if candidate in existing else ""
+
+
+def infer_project_from_notes(notes_path: str) -> str:
+    value = (notes_path or "").strip()
+    if not value:
+        return ""
+    path = Path(value).expanduser().resolve()
+    if path.name != "NOTES.md":
+        return ""
+    if path.parent.name == "active":
+        return path.parent.parent.name
+    # Legacy repo layout: <project>/Notes/NOTES.md should map to the project folder.
+    if path.parent.name.lower() == "notes":
+        return path.parent.parent.name
+    return path.parent.name
+
+
+def notes_metrics(text: str) -> dict[str, int | str]:
+    lines = text.splitlines()
+    return {
+        "line_count": len(lines),
+        "char_count": len(text),
+        "date_heading_count": sum(1 for line in lines if DATE_HEADING_RE.match(line)),
+        "sha1": hashlib.sha1(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def guard_paths(project) -> tuple[Path, Path]:
+    guard_dir = project.archive_dir / "guard"
+    return guard_dir / "NOTES.last_good.md", guard_dir / "state.json"
+
+
+def load_last_good(project) -> tuple[str, dict[str, int | str]] | None:
+    last_good_path, state_path = guard_paths(project)
+    if not last_good_path.exists():
+        return None
+
+    try:
+        text = last_good_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    metrics = notes_metrics(text)
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            recorded = str(state.get("sha1", "")).strip()
+            if recorded and recorded != metrics["sha1"]:
+                return None
+        except Exception:
+            # Best effort only; continue with computed metrics.
+            pass
+    return text, metrics
+
+
+def persist_last_good(project, text: str, metrics: dict[str, int | str]) -> None:
+    last_good_path, state_path = guard_paths(project)
+    last_good_path.parent.mkdir(parents=True, exist_ok=True)
+    last_good_path.write_text(text, encoding="utf-8")
+    state = {
+        "updated_at": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "line_count": int(metrics["line_count"]),
+        "char_count": int(metrics["char_count"]),
+        "date_heading_count": int(metrics["date_heading_count"]),
+        "sha1": str(metrics["sha1"]),
+    }
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def should_restore_from_shrink(current: dict[str, int | str], baseline: dict[str, int | str]) -> bool:
+    baseline_lines = int(baseline["line_count"])
+    baseline_chars = int(baseline["char_count"])
+    current_lines = int(current["line_count"])
+    current_chars = int(current["char_count"])
+
+    if baseline_lines < 80 or baseline_chars < 3500:
+        return False
+    if current_lines > 50:
+        return False
+    if current_lines > baseline_lines * 0.55:
+        return False
+    if current_chars > baseline_chars * 0.55:
+        return False
+    return True
+
+
+def should_update_baseline(current: dict[str, int | str], baseline: dict[str, int | str] | None) -> bool:
+    if baseline is None:
+        return True
+
+    if str(current["sha1"]) == str(baseline["sha1"]):
+        return False
+
+    current_lines = int(current["line_count"])
+    current_chars = int(current["char_count"])
+    baseline_lines = int(baseline["line_count"])
+    baseline_chars = int(baseline["char_count"])
+
+    if current_lines >= baseline_lines:
+        return True
+    if current_chars >= baseline_chars:
+        return True
+
+    line_ratio = current_lines / max(1, baseline_lines)
+    char_ratio = current_chars / max(1, baseline_chars)
+    return line_ratio >= 0.85 and char_ratio >= 0.85
+
+
+def _safe_segment(value: str) -> str:
+    clean = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
+    return clean.strip("._-") or "anon"
+
+
+def scoped_project_name(user_id: str, project_name: str) -> str:
+    return f"u_{_safe_segment(user_id)}__{project_name.strip()}"
+
+
+def unscoped_project_name(user_id: str, scoped: str) -> str | None:
     prefix = f"u_{_safe_segment(user_id)}__"
-    rows = []
-    for item in all_projects_summary():
-        scoped = str(item.get("project", ""))
-        if not scoped.startswith(prefix):
-            continue
-        name = unscoped_project_name(user_id, scoped)
-        if not name:
-            continue
-        row = dict(item)
-        row["project"] = name
-        rows.append(row)
-    return rows
+    if not scoped.startswith(prefix):
+        return None
+    return scoped[len(prefix) :]
 
 
-def user_project_state(user_id: str, project_name: str) -> dict:
-    scoped = scoped_project_name(user_id, project_name)
-    state = project_state(project_paths(scoped))
-    state["project"] = project_name
-    state["user_id"] = user_id
-    return state
+def build_html(initial_project: str) -> str:
+    init_json = json.dumps(initial_project, ensure_ascii=False)
+    template = """<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>Notes Toolkit Dashboard</title>
+  <script src=\"https://accounts.google.com/gsi/client\" async defer></script>
+  <style>
+    :root {{
+      --bg: #fffbe6;
+      --panel: #fffef3;
+      --line: #eadfb0;
+      --ink: #2f2a1f;
+      --muted: #6f674f;
+      --accent: #1f6feb;
+      --ok: #157347;
+      --warn: #b54708;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: linear-gradient(170deg, #fffdf0 0%, #fff4bf 100%);
+      color: var(--ink);
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+    }}
+    .wrap {{ max-width: 1160px; margin: 20px auto; padding: 0 14px; }}
+    .header {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 6px 20px rgba(42, 57, 80, 0.08);
+    }}
+    .header h1 {{ margin: 0 0 8px; font-size: 22px; }}
+    .meta {{ margin: 0; color: var(--muted); font-size: 13px; }}
+    .toolbar {{ margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }}
+    button {{
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 9px;
+      padding: 7px 10px;
+      cursor: pointer;
+      font-size: 13px;
+    }}
+    button.primary {{ background: #eaf2ff; border-color: #b8d0ff; color: #0b4db5; }}
+    .grid {{ margin-top: 14px; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }}
+    .top-grid {{ grid-column: 1 / -1; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; align-items: stretch; }}
+    .right-stack {{ display: grid; gap: 12px; grid-template-rows: 1fr 1fr; height: 100%; min-height: 0; }}
+    .card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }}
+    .stack-card {{ display: flex; flex-direction: column; min-height: 0; }}
+    .stack-card .list {{ min-height: 0; overflow: auto; }}
+    .title {{ margin: 0 0 8px; font-size: 15px; font-weight: 700; }}
+    .list {{ display: grid; gap: 7px; }}
+    .row {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }}
+    .row-main {{ min-width: 0; flex: 1; }}
+    .row-text {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .project-row {{ display: flex; justify-content: space-between; gap: 8px; align-items: center; }}
+    .todo-complete {{ flex: 0 0 auto; display: flex; align-items: center; }}
+    .todo-check {{ width: 18px; height: 18px; cursor: pointer; }}
+    .todo-row {{ align-items: flex-start; }}
+    .todo-left {{ flex: 0 0 auto; padding-top: 2px; }}
+    .todo-main {{ min-width: 0; flex: 1; }}
+    .todo-head {{ display: flex; align-items: baseline; gap: 8px; min-width: 0; }}
+    .todo-brief {{ min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .todo-seeall {{
+      border: none;
+      background: transparent;
+      color: #0b4db5;
+      font-size: 12px;
+      padding: 0;
+      cursor: pointer;
+      flex: 0 0 auto;
+      min-width: 52px;
+      text-align: right;
+    }}
+    .todo-full {{ margin-top: 6px; font-size: 12px; line-height: 1.4; white-space: normal; }}
+    .todo-footer {{ margin-top: 6px; display: flex; justify-content: flex-end; }}
+    .hidden-inline {{ display: none; }}
+    .notes-row .todo-brief {{ font-weight: 500; }}
+    .recovered-row {{
+      background: linear-gradient(180deg, #fffdf6 0%, #fff6d9 100%);
+      border-color: #d9c27a;
+    }}
+    .notes-meta {{ margin-top: 4px; }}
+    .potential-actions {{ display: flex; gap: 6px; flex: 0 0 auto; }}
+    .icon-btn {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+    }}
+    .icon-btn.accept {{ color: var(--ok); }}
+    .icon-btn.reject {{ color: #b42318; }}
+    .icon-btn.longterm {{ color: #0b4db5; font-weight: 700; }}
+    .muted {{ color: var(--muted); font-size: 12px; }}
+    .id {{ color: #0b4db5; font-weight: 700; }}
+    .status-pending {{ color: var(--warn); }}
+    .status-promoted, .status-done {{ color: var(--ok); }}
+    .forms {{ display: grid; gap: 8px; }}
+    .inline {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+    input[type=\"text\"], input[type=\"number\"] {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px;
+      min-width: 180px;
+      font-size: 13px;
+    }}
+    .full {{ grid-column: 1 / -1; }}
+    .hidden {{ display: none; }}
+    @media (max-width: 900px) {{
+      .grid {{ grid-template-columns: 1fr; }}
+      .top-grid {{ grid-template-columns: 1fr; }}
+      .right-stack {{ grid-template-rows: auto auto; height: auto; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class=\"wrap\">
+    <div class=\"header\">
+      <h1>Notes Toolkit Dashboard</h1>
+      <p id=\"meta\" class=\"meta\">Loading...</p>
+      <div class=\"toolbar\" style=\"margin-top:8px; border-top:1px dashed var(--line); padding-top:8px;\">
+        <input id=\"google-client-id\" type=\"text\" placeholder=\"Google Client ID\" style=\"min-width:260px;\" />
+        <button id=\"btn-google-init\">Init Google Sign-In</button>
+        <div id=\"google-signin\"></div>
+        <span id=\"auth-label\" class=\"muted\">Not signed in</span>
+      </div>
+      <div class=\"toolbar\">
+        <button id=\"btn-global\" class=\"primary\">Global View</button>
+        <button id=\"btn-project\">Current Project</button>
+        <button id=\"btn-refresh\">Refresh</button>
+        <button id=\"btn-notes\">Notes</button>
+        <span id=\"current-project\" class=\"muted\"></span>
+      </div>
+    </div>
+
+    <div id=\"home-view\" class=\"grid\">
+      <section class=\"card full\">
+        <h2 class=\"title\">Projects</h2>
+        <div id=\"project-list\" class=\"list\"></div>
+      </section>
+    </div>
+
+    <div id=\"project-view\" class=\"grid hidden\">
+      <div class=\"top-grid\">
+        <section id=\"open-todos-card\" class=\"card\">
+          <h2 class=\"title\">Open Todos <span id=\"todo-count\" class=\"muted\"></span></h2>
+          <div id=\"todo-list\" class=\"list\"></div>
+        </section>
+
+        <div class=\"right-stack\">
+          <section class=\"card stack-card\">
+            <h2 class=\"title\">Potential <span id=\"pending-count\" class=\"muted\"></span></h2>
+            <div id=\"potential-list\" class=\"list\"></div>
+          </section>
+          <section class=\"card stack-card\">
+            <h2 class=\"title\">Long-term Todos <span id=\"long-term-count\" class=\"muted\"></span></h2>
+            <div id=\"long-term-list\" class=\"list\"></div>
+          </section>
+        </div>
+      </div>
+
+      <section id=\"notes-card\" class=\"card full hidden\">
+        <h2 class=\"title\">Notes Entries <span id=\"notes-count\" class=\"muted\"></span></h2>
+        <div id=\"notes-list\" class=\"list\"></div>
+      </section>
+
+      <section class=\"card full\">
+        <h2 class=\"title\">Actions</h2>
+        <div class=\"forms\">
+          <div class=\"inline\">
+            <input id=\"note-input\" type=\"text\" placeholder=\"add note text\" />
+            <button id=\"add-note\">Add Note</button>
+          </div>
+          <div class=\"inline\">
+            <input id=\"todo-input\" type=\"text\" placeholder=\"add todo text\" />
+            <button id=\"add-todo\">Add Todo</button>
+          </div>
+          <div class=\"inline\">
+            <input id=\"approve-id\" type=\"number\" min=\"1\" placeholder=\"pending id\" />
+            <button id=\"approve-potential\">Approve Potential</button>
+            <button id=\"reject-potential\">Reject Potential</button>
+          </div>
+          <div class=\"inline\">
+            <input id=\"complete-id\" type=\"number\" min=\"1\" placeholder=\"todo id\" />
+            <button id=\"complete-todo\">Complete Todo</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const initialProject = {init_json};
+    const meta = document.getElementById("meta");
+    const currentProjectLabel = document.getElementById("current-project");
+    const homeView = document.getElementById("home-view");
+    const projectView = document.getElementById("project-view");
+    const projectList = document.getElementById("project-list");
+    const openTodosCard = document.getElementById("open-todos-card");
+    const todoList = document.getElementById("todo-list");
+    const potentialList = document.getElementById("potential-list");
+    const longTermList = document.getElementById("long-term-list");
+    const notesCard = document.getElementById("notes-card");
+    const notesList = document.getElementById("notes-list");
+    const notesCount = document.getElementById("notes-count");
+    const todoCount = document.getElementById("todo-count");
+    const pendingCount = document.getElementById("pending-count");
+    const longTermCount = document.getElementById("long-term-count");
+
+    function readStoredProject() {{
+      try {{
+        return localStorage.getItem("notes_dashboard_last_project") || "";
+      }} catch (_err) {{
+        return "";
+      }}
+    }}
+
+    function writeStoredProject(projectName) {{
+      try {{
+        if (projectName) {{
+          localStorage.setItem("notes_dashboard_last_project", projectName);
+        }}
+      }} catch (_err) {{
+        // Storage access can fail in strict browser modes; ignore.
+      }}
+    }}
+
+    const storedProject = readStoredProject();
+    let currentProject = "";
+    let lastProject = initialProject || storedProject || "";
+    let notesVisible = false;
+    let refreshInFlight = false;
+    const expandedTodoKeys = new Set();
+    const expandedNoteKeys = new Set();
+    const AUTO_REFRESH_MS = 2000;
+    let authToken = "";
+    const authLabel = document.getElementById("auth-label");
+
+    function authHeaders() {{
+      if (!authToken) throw new Error("Please sign in with Google first.");
+      return {{
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${{authToken}}`,
+      }};
+    }}
+
+    function initGoogleAuth() {{
+      const clientInput = document.getElementById("google-client-id");
+      try {{
+        clientInput.value = localStorage.getItem("notes_google_client_id") || "";
+      }} catch (_err) {{
+        clientInput.value = "";
+      }}
+
+      document.getElementById("btn-google-init").addEventListener("click", () => {{
+        const clientId = String(clientInput.value || "").trim();
+        if (!clientId) {{
+          meta.textContent = "Please input Google Client ID.";
+          return;
+        }}
+        try {{
+          localStorage.setItem("notes_google_client_id", clientId);
+        }} catch (_err) {{
+          // ignore storage failures
+        }}
+        if (!window.google || !google.accounts || !google.accounts.id) {{
+          meta.textContent = "Google Sign-In SDK not ready yet.";
+          return;
+        }}
+        google.accounts.id.initialize({{
+          client_id: clientId,
+          callback: (resp) => {{
+            authToken = resp.credential || "";
+            try {{
+              const payload = JSON.parse(atob((authToken.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/")));
+              authLabel.textContent = `Signed in: ${{payload.email || payload.sub}}`;
+            }} catch (_err) {{
+              authLabel.textContent = "Signed in";
+            }}
+            refreshActiveView().catch(() => null);
+          }}
+        }});
+        const holder = document.getElementById("google-signin");
+        holder.innerHTML = "";
+        google.accounts.id.renderButton(holder, {{ theme: "outline", size: "small" }});
+        authLabel.textContent = "Google Sign-In ready";
+      }});
+    }}
+
+    function esc(s) {{
+      return String(s)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }}
+
+    function escapeRegExp(s) {{
+      return String(s).replace(/[.*+?^${{}}()|[\\]\\\\]/g, "\\\\$&");
+    }}
+
+    function boldImportantNouns(text) {{
+      const englishPhrases = [
+        "knowledge base",
+        "game cards",
+        "game card",
+        "game mode",
+        "first sentence",
+        "source of truth",
+        "vector db",
+        "to-do tracking",
+      ];
+      const englishWords = [
+        "character",
+        "characters",
+        "persona",
+        "personas",
+        "profile",
+        "friend",
+        "hitmap",
+        "intro",
+        "voice",
+        "voices",
+        "latency",
+        "memory",
+        "memories",
+        "vector",
+        "database",
+        "performance",
+        "pipeline",
+        "schema",
+        "specification",
+        "dashboard",
+        "script",
+        "scripts",
+        "deploy",
+        "deployment",
+        "asset",
+        "assets",
+        "layout",
+        "workflow",
+        "config",
+        "telegram",
+        "quality",
+        "cards",
+        "card",
+      ];
+      const chineseTerms = [
+        "角色",
+        "角色卡",
+        "知识库",
+        "游戏卡",
+        "人设",
+        "用户",
+        "主人公",
+        "服饰",
+        "声音",
+        "引子",
+        "关系",
+        "朋友",
+        "场景",
+        "延迟",
+        "性能",
+        "记忆",
+        "向量库",
+        "部署",
+        "脚本",
+        "看板",
+      ];
+      const knownNames = ["zoe", "fei", "lebing", "乐冰", "美咲", "小萌", "Zoe", "Fei"];
+      const capitalizedStopWords = new Set([
+        "add",
+        "need",
+        "create",
+        "recreate",
+        "design",
+        "optimize",
+        "update",
+        "please",
+        "game",
+        "mode",
+        "for",
+        "with",
+        "and",
+      ]);
+
+      let out = esc(text || "");
+      const wrapStrong = (value) => `<strong>${{value}}</strong>`;
+      const replaceOutsideStrong = (input, pattern, replacer) => {{
+        return String(input)
+          .split(/(<strong>.*?<\\/strong>)/g)
+          .map((seg) => (seg.startsWith("<strong>") ? seg : seg.replace(pattern, replacer)))
+          .join("");
+      }};
+
+      englishPhrases
+        .slice()
+        .sort((a, b) => b.length - a.length)
+        .forEach((phrase) => {{
+          const re = new RegExp(`\\\\b(${{escapeRegExp(phrase)}})\\\\b`, "gi");
+          out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
+        }});
+
+      englishWords.forEach((word) => {{
+        const re = new RegExp(`\\\\b(${{escapeRegExp(word)}})\\\\b`, "gi");
+        out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
+      }});
+
+      chineseTerms.forEach((term) => {{
+        const re = new RegExp(escapeRegExp(term), "g");
+        out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
+      }});
+
+      knownNames.forEach((name) => {{
+        if (/^[A-Za-z]/.test(name)) {{
+          const re = new RegExp(`\\\\b(${{escapeRegExp(name)}})\\\\b`, "gi");
+          out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
+          return;
+        }}
+        const re = new RegExp(escapeRegExp(name), "g");
+        out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
+      }});
+
+      out = replaceOutsideStrong(
+        out,
+        /\\b([A-Za-z][A-Za-z0-9_-]{1,24})'s\\b/g,
+        (full, token) => `${{wrapStrong(token)}}'s`
+      );
+
+      out = replaceOutsideStrong(out, /\\b([A-Z][a-z]{2,24})\\b/g, (full, token) => {{
+        const lower = token.toLowerCase();
+        if (capitalizedStopWords.has(lower)) {{
+          return full;
+        }}
+        return wrapStrong(token);
+      }});
+
+      out = replaceOutsideStrong(
+        out,
+        /([\\u4e00-\\u9fff]{2,4})(?=的(?:朋友|同学|同事|角色|人设|Profile|profile))/g,
+        (m, token) => wrapStrong(token)
+      );
+
+      out = replaceOutsideStrong(
+        out,
+        /([\\u4e00-\\u9fff]{2,4})(?=要的Profile)/g,
+        (m, token) => wrapStrong(token)
+      );
+
+      return out;
+    }}
+
+    function stripTodoMeta(text) {{
+      return String(text || "")
+        .replace(/\\[\\d{{4}}-\\d{{2}}-\\d{{2}}\\s+\\d{{2}}:\\d{{2}}\\s+\\([^\\]]+\\)\\]\\s*/g, "")
+        .replace(/^\\[(?:RECOVERED|REOPENED)[^\\]]*\\]\\s*/i, "")
+        .replace(/^-\\s*\\[(?: |x|X)\\]\\s*/g, "")
+        .replace(/\\s+/g, " ")
+        .trim();
+    }}
+
+    function summarizeTodo(text, maxLen = 60) {{
+      const full = stripTodoMeta(text);
+      if (full.length <= maxLen) return {{ brief: full, full }};
+      return {{ brief: `${{full.slice(0, maxLen).trimEnd()}}...`, full }};
+    }}
+
+    function stripNoteMeta(text) {{
+      return String(text || "")
+        .replace(/^\\[\\d{{4}}-\\d{{2}}-\\d{{2}}\\s+\\d{{2}}:\\d{{2}}\\s+\\([^\\]]+\\)\\]\\s*/g, "")
+        .replace(/^\\[(?:RECOVERED|REOPENED)[^\\]]*\\]\\s*/i, "")
+        .replace(/\\s+/g, " ")
+        .trim();
+    }}
+
+    function isRecoveredEntry(text) {{
+      const withoutTs = String(text || "")
+        .replace(/^\\[\\d{{4}}-\\d{{2}}-\\d{{2}}\\s+\\d{{2}}:\\d{{2}}\\s+\\([^\\]]+\\)\\]\\s*/g, "")
+        .trim();
+      return /^\\[(?:RECOVERED|REOPENED)\\b/i.test(withoutTs);
+    }}
+
+    function todoKey(todo) {{
+      return `${{currentProject}}::todo::${{todo.line_no || 0}}::${{todo.text || ""}}`;
+    }}
+
+    function noteKey(note) {{
+      return `${{currentProject}}::note::${{note.line_no || 0}}::${{note.text || ""}}`;
+    }}
+
+    function summarizeText(text, maxLen = 80) {{
+      const full = String(text || "").trim();
+      if (full.length <= maxLen) return {{ brief: full, full }};
+      return {{ brief: `${{full.slice(0, maxLen).trimEnd()}}...`, full }};
+    }}
+
+    function setTooltip(_node, _text) {{
+      // Hover tooltip display is intentionally disabled.
+    }}
+
+    function setToolbarState(isHome) {{
+      const globalBtn = document.getElementById("btn-global");
+      const projectBtn = document.getElementById("btn-project");
+      const notesBtn = document.getElementById("btn-notes");
+      globalBtn.classList.toggle("primary", isHome);
+      projectBtn.classList.toggle("primary", !isHome);
+      projectBtn.disabled = !lastProject;
+      notesBtn.classList.toggle("primary", !isHome && notesVisible);
+      notesBtn.disabled = isHome || !lastProject;
+    }}
+
+    function applyNotesVisibility() {{
+      notesCard.classList.toggle("hidden", !notesVisible);
+    }}
+
+    function renderNotesEntries(entries) {{
+      notesCount.textContent = `(${entries.length})`;
+      notesList.innerHTML = "";
+      if (!entries.length) {{
+        emptyNode(notesList, "No note entries found.");
+        return;
+      }}
+
+      entries.forEach((n) => {{
+        const prepared = summarizeText(stripNoteMeta(n.text), 90);
+        const row = document.createElement("div");
+        row.className = "row todo-row notes-row";
+        if (isRecoveredEntry(n.text)) {{
+          row.classList.add("recovered-row");
+        }}
+        setTooltip(row, n.text);
+        const left = document.createElement("label");
+        left.className = "todo-left";
+        left.title = `Hide note #${{n.id}}`;
+        left.innerHTML = `<input type="checkbox" class="todo-check" aria-label="Hide note #${{n.id}}" />`;
+        left.querySelector("input").addEventListener("change", (ev) => {{
+          if (!ev.target.checked) return;
+          ev.target.disabled = true;
+          runAction("dismiss_note", {{ id: n.id }});
+        }});
+
+        const right = document.createElement("div");
+        right.className = "todo-main";
+        right.innerHTML = `
+          <div class="todo-head">
+            <span class="id">#${{n.id}}</span>
+            <span class="todo-brief">${{boldImportantNouns(prepared.brief || "(empty)")}}</span>
+            <button type="button" class="todo-seeall">See all</button>
+          </div>
+          <div class="todo-full hidden-inline">${{boldImportantNouns(prepared.full || "(empty)")}}</div>
+          <div class="muted notes-meta">section: ${{esc(n.section || "-")}} | line: ${{n.line_no}}</div>
+        `;
+
+        const seeAllBtn = right.querySelector(".todo-seeall");
+        const fullNode = right.querySelector(".todo-full");
+        const key = noteKey(n);
+        if (expandedNoteKeys.has(key)) {{
+          fullNode.classList.remove("hidden-inline");
+          seeAllBtn.textContent = "See less";
+        }}
+        seeAllBtn.addEventListener("click", () => {{
+          const hidden = fullNode.classList.toggle("hidden-inline");
+          seeAllBtn.textContent = hidden ? "See all" : "See less";
+          if (hidden) {{
+            expandedNoteKeys.delete(key);
+          }} else {{
+            expandedNoteKeys.add(key);
+          }}
+        }});
+        row.appendChild(left);
+        row.appendChild(right);
+        notesList.appendChild(row);
+      }});
+    }}
+
+    function renderTodoRows(targetList, todos, emptyText, options = {{}}) {{
+      const allowLongTermButton = Boolean(options.allowLongTermButton);
+      targetList.innerHTML = "";
+      if (!todos.length) {{
+        emptyNode(targetList, emptyText);
+        return;
+      }}
+
+      todos.forEach((t) => {{
+        const summary = summarizeTodo(t.text);
+        const row = document.createElement("div");
+        row.className = "row todo-row";
+        if (isRecoveredEntry(t.text)) {{
+          row.classList.add("recovered-row");
+        }}
+
+        const left = document.createElement("label");
+        left.className = "todo-left";
+        left.innerHTML = `<input type="checkbox" class="todo-check" aria-label="Complete todo #${{t.id}}" />`;
+        left.querySelector("input").addEventListener("change", (ev) => {{
+          if (!ev.target.checked) return;
+          ev.target.disabled = true;
+          runAction("complete_todo", {{ id: t.id }});
+        }});
+
+        const right = document.createElement("div");
+        right.className = "todo-main";
+        right.innerHTML = `
+          <div class="todo-head">
+            <span class="id">#${{t.id}}</span>
+            <span class="todo-brief">${{boldImportantNouns(summary.brief || "(empty)")}}</span>
+            <button type="button" class="todo-seeall">See all</button>
+          </div>
+          <div class="todo-full hidden-inline">${{boldImportantNouns(summary.full || "(empty)")}}</div>
+          ${{allowLongTermButton ? `<div class="todo-footer hidden-inline"><button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${{t.id}} as long-term" title="Mark as long-term">L</button></div>` : ""}}
+        `;
+        const seeAllBtn = right.querySelector(".todo-seeall");
+        const fullNode = right.querySelector(".todo-full");
+        const footerNode = right.querySelector(".todo-footer");
+        const longTermBtn = right.querySelector(".todo-longterm");
+        const key = todoKey(t);
+        if (expandedTodoKeys.has(key)) {{
+          fullNode.classList.remove("hidden-inline");
+          seeAllBtn.textContent = "See less";
+          if (footerNode) {{
+            footerNode.classList.remove("hidden-inline");
+          }}
+        }}
+        seeAllBtn.addEventListener("click", () => {{
+          const hidden = fullNode.classList.toggle("hidden-inline");
+          seeAllBtn.textContent = hidden ? "See all" : "See less";
+          if (footerNode) {{
+            footerNode.classList.toggle("hidden-inline", hidden);
+          }}
+          if (hidden) {{
+            expandedTodoKeys.delete(key);
+          }} else {{
+            expandedTodoKeys.add(key);
+          }}
+        }});
+        if (longTermBtn) {{
+          longTermBtn.addEventListener("click", () => {{
+            longTermBtn.disabled = true;
+            runAction("mark_long_term_todo", {{ id: t.id }});
+          }});
+        }}
+
+        row.appendChild(left);
+        row.appendChild(right);
+        targetList.appendChild(row);
+      }});
+    }}
+
+    function emptyNode(node, text) {{
+      node.innerHTML = "";
+      const div = document.createElement("div");
+      div.className = "row muted";
+      div.textContent = text;
+      node.appendChild(div);
+    }}
+
+    async function apiGet(url) {{
+      const res = await fetch(url, {{ cache: "no-store", headers: authHeaders() }});
+      if (!res.ok) {{
+        const data = await res.json().catch(() => ({{}}));
+        throw new Error(data.message || `${{res.status}} ${{res.statusText}}`);
+      }}
+      return await res.json();
+    }}
+
+    async function apiPost(url, body) {{
+      const res = await fetch(url, {{
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      }});
+      const data = await res.json().catch(() => ({{ ok: false, message: "Invalid response" }}));
+      if (!res.ok || data.ok === false) throw new Error(data.message || `${{res.status}} ${{res.statusText}}`);
+      return data;
+    }}
+
+    async function refreshActiveView() {{
+      if (refreshInFlight || document.hidden || !authToken) return;
+      refreshInFlight = true;
+      try {{
+        if (currentProject) {{
+          await loadProject(currentProject);
+        }} else {{
+          await loadHome();
+        }}
+      }} catch (err) {{
+        meta.textContent = err.message || String(err);
+      }} finally {{
+        refreshInFlight = false;
+      }}
+    }}
+
+    async function loadHome() {{
+      currentProject = "";
+      notesVisible = false;
+      currentProjectLabel.textContent = "Home View";
+      setToolbarState(true);
+      applyNotesVisibility();
+      homeView.classList.remove("hidden");
+      projectView.classList.add("hidden");
+
+      const data = await apiGet("/api/projects");
+      meta.textContent = `Projects: ${{data.projects.length}} | Updated: ${{data.refreshed_at}}`;
+
+      projectList.innerHTML = "";
+      if (!data.projects.length) {{
+        emptyNode(projectList, "No projects found.");
+        return;
+      }}
+
+      data.projects.forEach((p) => {{
+        const row = document.createElement("div");
+        row.className = "row project-row";
+        setTooltip(row, `project=${{p.project}} todo=${{p.todo_count}} pending=${{p.potential_pending_count}} last=${{p.last_activity || "-"}}`);
+        row.innerHTML = `
+          <div>
+            <div><strong>${{esc(p.project)}}</strong></div>
+            <div class="muted">todo=${{p.todo_count}}, pending=${{p.potential_pending_count}}, last=${{esc(p.last_activity || "-")}}</div>
+          </div>
+          <button data-project="${{esc(p.project)}}">Open</button>
+        `;
+        row.querySelector("button").addEventListener("click", () => loadProject(p.project));
+        projectList.appendChild(row);
+      }});
+    }}
+
+    async function loadProject(projectName) {{
+      currentProject = projectName;
+      lastProject = projectName;
+      writeStoredProject(projectName);
+      currentProjectLabel.textContent = `Project: ${{projectName}}`;
+      setToolbarState(false);
+      applyNotesVisibility();
+      homeView.classList.add("hidden");
+      projectView.classList.remove("hidden");
+
+      const data = await apiGet(`/api/project/${{encodeURIComponent(projectName)}}/state`);
+      meta.textContent = `Updated: ${{data.updated_at}} | notes: ${{data.notes_path}}`;
+      const longTermTodos = Array.isArray(data.long_term_todos) ? data.long_term_todos : [];
+      const longTermTodoIds = new Set(longTermTodos.map((item) => item.id));
+      const openTodos = Array.isArray(data.todos) ? data.todos.filter((item) => !longTermTodoIds.has(item.id)) : [];
+      todoCount.textContent = `(${openTodos.length})`;
+      pendingCount.textContent = `(${data.potential_pending_count})`;
+      longTermCount.textContent = `(${longTermTodos.length})`;
+      renderNotesEntries(Array.isArray(data.notes) ? data.notes : []);
+
+      renderTodoRows(todoList, openTodos, "No open todos.", {{ allowLongTermButton: true }});
+      renderTodoRows(longTermList, longTermTodos, "No long-term todos.");
+
+      potentialList.innerHTML = "";
+      const pending = data.potentials.filter((p) => p.status === "pending");
+      if (!pending.length) {{
+        emptyNode(potentialList, "No pending potential items.");
+      }} else {{
+        pending.forEach((p, idx) => {{
+          const pendingId = idx + 1;
+          const row = document.createElement("div");
+          row.className = "row";
+          setTooltip(row, p.text);
+          row.innerHTML = `
+            <div class="potential-actions">
+              <button type="button" class="icon-btn accept" aria-label="Approve potential #${{pendingId}}">&#10003;</button>
+              <button type="button" class="icon-btn reject" aria-label="Reject potential #${{pendingId}}">&#10005;</button>
+            </div>
+            <div class="row-main">
+              <div class="row-text"><span class="id">#${{pendingId}}</span> <span class="status-pending">[pending]</span> ${{esc(p.text)}}</div>
+              <div class="muted">${{esc(p.timestamp)}}</div>
+            </div>
+          `;
+          const approveBtn = row.querySelector(".icon-btn.accept");
+          const rejectBtn = row.querySelector(".icon-btn.reject");
+          approveBtn.addEventListener("click", () => {{
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
+            runAction("approve_potential", {{ id: pendingId }});
+          }});
+          rejectBtn.addEventListener("click", () => {{
+            approveBtn.disabled = true;
+            rejectBtn.disabled = true;
+            runAction("reject_potential", {{ id: pendingId }});
+          }});
+          potentialList.appendChild(row);
+        }});
+      }}
+
+    }}
+
+    async function runAction(action, payload) {{
+      if (!currentProject) return;
+      try {{
+        await apiPost(`/api/project/${{encodeURIComponent(currentProject)}}/actions`, {{ action, ...payload }});
+        await loadProject(currentProject);
+      }} catch (err) {{
+        alert(`Action failed: ${{err.message || err}}`);
+      }}
+    }}
+
+    document.getElementById("btn-global").addEventListener("click", () => loadHome().catch((e) => (meta.textContent = e.message)));
+    document.getElementById("btn-project").addEventListener("click", () => {{
+      if (!lastProject) return;
+      loadProject(lastProject).catch((e) => (meta.textContent = e.message));
+    }});
+    document.getElementById("btn-refresh").addEventListener("click", () => (currentProject ? loadProject(currentProject) : loadHome()).catch((e) => (meta.textContent = e.message)));
+    document.getElementById("btn-notes").addEventListener("click", () => {{
+      const targetProject = currentProject || lastProject;
+      if (!targetProject) {{
+        meta.textContent = "Open a project first to view Notes entries.";
+        return;
+      }}
+      const ensureLoaded = currentProject
+        ? Promise.resolve()
+        : loadProject(targetProject).catch((e) => {{
+            meta.textContent = e.message || String(e);
+          }});
+      ensureLoaded.then(() => {{
+        notesVisible = true;
+        setToolbarState(false);
+        applyNotesVisibility();
+        notesCard.scrollIntoView({{ behavior: "smooth", block: "start" }});
+      }});
+    }});
+
+    document.getElementById("add-note").addEventListener("click", () => {{
+      const value = document.getElementById("note-input").value.trim();
+      if (!value) return;
+      runAction("add_note", {{ text: value }});
+      document.getElementById("note-input").value = "";
+    }});
+
+    document.getElementById("add-todo").addEventListener("click", () => {{
+      const value = document.getElementById("todo-input").value.trim();
+      if (!value) return;
+      runAction("add_todo", {{ text: value }});
+      document.getElementById("todo-input").value = "";
+    }});
+
+    document.getElementById("approve-potential").addEventListener("click", () => {{
+      const id = parseInt(document.getElementById("approve-id").value, 10);
+      if (!id) return;
+      runAction("approve_potential", {{ id }});
+    }});
+
+    document.getElementById("reject-potential").addEventListener("click", () => {{
+      const id = parseInt(document.getElementById("approve-id").value, 10);
+      if (!id) return;
+      runAction("reject_potential", {{ id }});
+    }});
+
+    document.getElementById("complete-todo").addEventListener("click", () => {{
+      const id = parseInt(document.getElementById("complete-id").value, 10);
+      if (!id) return;
+      runAction("complete_todo", {{ id }});
+    }});
+
+    async function init() {{
+      meta.textContent = "Please sign in with Google to load dashboard data.";
+      setInterval(refreshActiveView, AUTO_REFRESH_MS);
+    }}
+
+    initGoogleAuth();
+    init();
+  </script>
+</body>
+</html>
+"""
+    template = template.replace("{{", "{").replace("}}", "}")
+    return template.replace("{init_json}", init_json)
 
 
 def main() -> int:
     args = parse_args()
     verifier = GoogleVerifier()
+    inferred = infer_project_from_notes(args.notes)
+    initial_project = pick_initial_project(args.project or inferred)
+    html = build_html(initial_project).encode("utf-8")
+
     stop_event = threading.Event()
-    raw_origins = args.cors_origins.strip() or os.environ.get("CORS_ALLOW_ORIGINS", "").strip()
-    cors_allowlist = {item.strip() for item in raw_origins.split(",") if item.strip()}
 
     def processor_worker() -> None:
-        interval = max(10, int(args.process_interval))
+        interval = max(10, args.process_interval)
+        last_notes_sig: dict[str, tuple[int, int]] = {}
+        last_good_cache: dict[str, tuple[str, dict[str, int | str]]] = {}
         while not stop_event.wait(interval):
-            for row in all_projects_summary():
+            for proj in list_projects(create_root=True):
                 try:
-                    process_potential_todos(project_paths(row["project"]), actor="system", log_writes=True)
+                    if proj.notes_path.exists():
+                        current_text = proj.notes_path.read_text(encoding="utf-8")
+                        current_metrics = notes_metrics(current_text)
+                        baseline = last_good_cache.get(proj.name)
+                        if baseline is None:
+                            loaded = load_last_good(proj)
+                            if loaded:
+                                baseline = loaded
+                                last_good_cache[proj.name] = loaded
+
+                        if baseline and should_restore_from_shrink(current_metrics, baseline[1]):
+                            shrunk_metrics = current_metrics
+                            snapshot_notes(proj.notes_path, reason="guard_detected_shrink")
+                            guard_dir = proj.archive_dir / "guard"
+                            guard_dir.mkdir(parents=True, exist_ok=True)
+                            bad_name = datetime.now().astimezone().strftime("NOTES.bad.%Y%m%d_%H%M%S.md")
+                            (guard_dir / bad_name).write_text(current_text, encoding="utf-8")
+
+                            restored_text = baseline[0]
+                            proj.notes_path.write_text(restored_text, encoding="utf-8")
+                            current_text = restored_text
+                            current_metrics = notes_metrics(current_text)
+                            append_behavior_log(
+                                proj,
+                                actor="system",
+                                action="guard_restore",
+                                target="notes_shrink",
+                                status="done",
+                                before_summary=(
+                                    f"lines={shrunk_metrics['line_count']} chars={shrunk_metrics['char_count']} "
+                                    f"(detected corrupted snapshot in {bad_name})"
+                                ),
+                                after_summary=(
+                                    f"restored last_good lines={current_metrics['line_count']} "
+                                    f"chars={current_metrics['char_count']}"
+                                ),
+                                notes_anchor="active/NOTES.md",
+                            )
+
+                        stat = proj.notes_path.stat()
+                        sig = (stat.st_mtime_ns, stat.st_size)
+                        previous = last_notes_sig.get(proj.name)
+                        if previous != sig:
+                            snapshot_notes(proj.notes_path, reason="dashboard_guard")
+                            last_notes_sig[proj.name] = sig
+
+                        baseline_metrics = baseline[1] if baseline else None
+                        if should_update_baseline(current_metrics, baseline_metrics):
+                            persist_last_good(proj, current_text, current_metrics)
+                            last_good_cache[proj.name] = (current_text, current_metrics)
+                    process_potential_todos(proj, actor="system", log_writes=True)
                 except Exception:
                     continue
 
@@ -219,40 +1234,6 @@ def main() -> int:
     worker.start()
 
     class Handler(BaseHTTPRequestHandler):
-        def _origin_allowed(self, origin: str) -> bool:
-            if not origin:
-                return False
-            if "*" in cors_allowlist:
-                return True
-            return origin in cors_allowlist
-
-        def _apply_cors(self) -> None:
-            origin = str(self.headers.get("Origin", "")).strip()
-            if self._origin_allowed(origin):
-                self.send_header("Access-Control-Allow-Origin", origin)
-                self.send_header("Vary", "Origin")
-                self.send_header("Access-Control-Allow-Credentials", "true")
-                self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-
-        def _json(self, payload: dict, status: int = 200) -> None:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self._apply_cors()
-            self.end_headers()
-            self.wfile.write(body)
-
-        def _read_json(self) -> dict:
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            raw = self.rfile.read(length) if length > 0 else b"{}"
-            try:
-                return json.loads(raw.decode("utf-8")) if raw else {}
-            except json.JSONDecodeError as exc:
-                raise ValueError("Invalid JSON payload.") from exc
-
         def _auth(self) -> AuthUser:
             auth = str(self.headers.get("Authorization", "")).strip()
             if not auth.lower().startswith("bearer "):
@@ -260,29 +1241,73 @@ def main() -> int:
             token = auth.split(" ", 1)[1].strip()
             return verifier.verify(token)
 
-        def do_OPTIONS(self) -> None:  # noqa: N802
-            self.send_response(204)
-            self._apply_cors()
-            self.send_header("Content-Length", "0")
+        def _user_projects_summary(self, user_id: str) -> list[dict]:
+            prefix = f"u_{_safe_segment(user_id)}__"
+            rows: list[dict] = []
+            for item in all_projects_summary():
+                scoped = str(item.get("project", ""))
+                if not scoped.startswith(prefix):
+                    continue
+                name = unscoped_project_name(user_id, scoped)
+                if not name:
+                    continue
+                row = dict(item)
+                row["project"] = name
+                rows.append(row)
+            return rows
+
+        def _user_project_state(self, user_id: str, project_name: str) -> dict:
+            scoped = scoped_project_name(user_id, project_name)
+            state = project_state(project_paths(scoped))
+            state["project"] = project_name
+            state["user_id"] = user_id
+            return state
+
+        def _write_json(self, payload: dict, *, status: int = 200) -> None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
 
-            if path == "/health":
-                self._json({"ok": True, "time": datetime.now(timezone.utc).isoformat()})
+            if path == "/":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+                return
+
+            if path.startswith("/project/"):
+                project_name = unquote(path[len("/project/") :]).strip("/")
+                if not project_name:
+                    self.send_response(302)
+                    self.send_header("Location", "/")
+                    self.end_headers()
+                    return
+                project_html = build_html(project_name).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(project_html)))
+                self.end_headers()
+                self.wfile.write(project_html)
                 return
 
             if path == "/api/projects":
                 try:
                     user = self._auth()
                 except AuthError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=401)
+                    self._write_json({"ok": False, "message": str(exc)}, status=401)
                     return
-                self._json(
+                self._write_json(
                     {
-                        "projects": user_projects_summary(user.user_id),
+                        "projects": self._user_projects_summary(user.user_id),
                         "refreshed_at": datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
                     }
                 )
@@ -291,130 +1316,110 @@ def main() -> int:
             if path.startswith("/api/project/") and path.endswith("/state"):
                 project_name = unquote(path[len("/api/project/") : -len("/state")]).strip("/")
                 if not project_name:
-                    self._json({"ok": False, "message": "Project name is required."}, status=400)
+                    self._write_json({"ok": False, "message": "Project name is required."}, status=400)
                     return
                 try:
                     user = self._auth()
                 except AuthError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=401)
-                    return
-                self._json(user_project_state(user.user_id, project_name))
-                return
-
-            if path == "/v1/projects":
-                try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=401)
-                    return
-                rows = user_projects_summary(user.user_id)
-                self._json({"ok": True, "projects": rows, "user_id": user.user_id})
-                return
-
-            if path.startswith("/v1/projects/") and path.endswith("/state"):
-                project_name = unquote(path[len("/v1/projects/") : -len("/state")]).strip("/")
-                if not project_name:
-                    self._json({"ok": False, "message": "Project name is required."}, status=400)
+                    self._write_json({"ok": False, "message": str(exc)}, status=401)
                     return
                 try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=401)
+                    state = self._user_project_state(user.user_id, project_name)
+                except Exception as exc:
+                    self._write_json({"ok": False, "message": str(exc)}, status=500)
                     return
-                state = user_project_state(user.user_id, project_name)
-                self._json({"ok": True, "state": state})
+                self._write_json(state)
                 return
 
-            self._json({"ok": False, "message": "Not found."}, status=404)
+            self.send_response(404)
+            self.end_headers()
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if not (path.startswith("/api/project/") and path.endswith("/actions")):
+                self.send_response(404)
+                self.end_headers()
+                return
+
+            project_name = unquote(path[len("/api/project/") : -len("/actions")]).strip("/")
+            if not project_name:
+                self._write_json({"ok": False, "message": "Project name is required."}, status=400)
+                return
             try:
-                payload = self._read_json()
-            except ValueError as exc:
-                self._json({"ok": False, "message": str(exc)}, status=400)
+                user = self._auth()
+            except AuthError as exc:
+                self._write_json({"ok": False, "message": str(exc)}, status=401)
                 return
 
-            if path.startswith("/api/project/") and path.endswith("/actions"):
-                project_name = unquote(path[len("/api/project/") : -len("/actions")]).strip("/")
-                if not project_name:
-                    self._json({"ok": False, "message": "Project name is required."}, status=400)
-                    return
-                try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=401)
-                    return
-                action = str(payload.get("action", "")).strip()
-                actor = str(payload.get("actor", "web")).strip() or "web"
-                scoped = scoped_project_name(user.user_id, project_name)
-                paths = project_paths(scoped)
-                try:
-                    result = run_action(paths, action=action, payload=payload, actor=actor)
-                except ValueError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=400)
-                    return
-                except Exception as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=500)
-                    return
-                if not result.ok:
-                    self._json({"ok": False, "message": result.message}, status=400)
-                    return
-                self._json({"ok": True, "message": result.message, "anchor": result.anchor, "state": user_project_state(user.user_id, project_name)})
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except json.JSONDecodeError:
+                self._write_json({"ok": False, "message": "Invalid JSON payload."}, status=400)
                 return
 
-            if path.startswith("/v1/projects/") and path.endswith("/actions"):
-                project_name = unquote(path[len("/v1/projects/") : -len("/actions")]).strip("/")
-                if not project_name:
-                    self._json({"ok": False, "message": "Project name is required."}, status=400)
+            action = str(payload.get("action", "")).strip()
+            actor = str(payload.get("actor", "web")).strip() or "web"
+
+            scoped_project = scoped_project_name(user.user_id, project_name)
+            paths = project_paths(scoped_project)
+            try:
+                if action == "add_note":
+                    result = add_note(paths, str(payload.get("text", "")), actor=actor)
+                elif action == "add_todo":
+                    result = add_todo(paths, str(payload.get("text", "")), actor=actor)
+                elif action == "approve_potential":
+                    result = approve_potential(paths, int(payload.get("id")), actor=actor)
+                elif action == "reject_potential":
+                    result = reject_potential(paths, int(payload.get("id")), actor=actor)
+                elif action == "complete_todo":
+                    result = complete_todo(paths, int(payload.get("id")), actor=actor)
+                elif action == "mark_long_term_todo":
+                    result = mark_todo_long_term(paths, int(payload.get("id")), actor=actor)
+                elif action == "dismiss_note":
+                    result = dismiss_note(paths, int(payload.get("id")), actor=actor)
+                else:
+                    self._write_json({"ok": False, "message": f"Unsupported action: {action}"}, status=400)
                     return
-                try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=401)
-                    return
-                action = str(payload.get("action", "")).strip()
-                actor = str(payload.get("actor", "api")).strip() or "api"
-                scoped = scoped_project_name(user.user_id, project_name)
-                paths = project_paths(scoped)
-                try:
-                    result = run_action(paths, action=action, payload=payload, actor=actor)
-                except ValueError as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=400)
-                    return
-                except Exception as exc:
-                    self._json({"ok": False, "message": str(exc)}, status=500)
-                    return
-                if not result.ok:
-                    self._json({"ok": False, "message": result.message}, status=400)
-                    return
-                state = user_project_state(user.user_id, project_name)
-                self._json(
-                    {
-                        "ok": True,
-                        "message": result.message,
-                        "anchor": result.anchor,
-                        "state": state,
-                    }
-                )
+            except Exception as exc:
+                self._write_json({"ok": False, "message": str(exc)}, status=500)
                 return
 
-            self._json({"ok": False, "message": "Not found."}, status=404)
+            if not result.ok:
+                self._write_json({"ok": False, "message": result.message}, status=400)
+                return
+
+            self._write_json(
+                {
+                    "ok": True,
+                    "message": result.message,
+                    "anchor": result.anchor,
+                    "state": self._user_project_state(user.user_id, project_name),
+                }
+            )
 
         def log_message(self, fmt: str, *args: object) -> None:
             return
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Notes API running at http://{args.host}:{args.port}")
+    print(f"Notes dashboard running at http://{args.host}:{args.port}")
+    if initial_project:
+        print(f"Initial project: {initial_project}")
+    else:
+        print("Initial view: Home")
     print("Press Ctrl+C to stop.")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nNotes API stopped.")
+        print("\nNotes dashboard stopped.")
     finally:
         stop_event.set()
         server.server_close()
+
     return 0
 
 
