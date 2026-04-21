@@ -1,7 +1,7 @@
 services:
   - type: web
     name: notes-backend
-    env: docker
+    runtime: docker
     dockerfilePath: ./Dockerfile
     autoDeploy: true
     disk:
@@ -20,7 +20,8 @@ services:
       - key: GOOGLE_CLIENT_ID
         sync: false
 
-  - type: static_site
+  - type: web
+    runtime: static
     name: notes-frontend
     rootDir: frontend
     staticPublishPath: .
