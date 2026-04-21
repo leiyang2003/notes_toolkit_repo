@@ -611,6 +611,8 @@ def build_html(initial_project: str) -> str:
       try {{
         if (projectName) {{
           localStorage.setItem("notes_dashboard_last_project", projectName);
+        }} else {{
+          localStorage.removeItem("notes_dashboard_last_project");
         }}
       }} catch (_err) {{
         // Storage access can fail in strict browser modes; ignore.
@@ -660,8 +662,7 @@ def build_html(initial_project: str) -> str:
         signedIn = false;
         signedInEmail = "";
         updateAuthLabel();
-        meta.textContent = "Signed out.";
-        await loadHome().catch(() => null);
+        clearSignedOutView("Signed out.");
       }});
 
       updateAuthLabel();
@@ -1033,6 +1034,32 @@ def build_html(initial_project: str) -> str:
       node.appendChild(div);
     }}
 
+    function clearSignedOutView(statusText) {{
+      currentProject = "";
+      lastProject = "";
+      notesVisible = false;
+      writeStoredProject("");
+      expandedTodoKeys.clear();
+      expandedNoteKeys.clear();
+      currentProjectLabel.textContent = "Home View";
+      setToolbarState(true);
+      applyNotesVisibility();
+      homeView.classList.remove("hidden");
+      projectView.classList.add("hidden");
+      emptyNode(projectList, "Please sign in with Google first.");
+      emptyNode(todoList, "Please sign in with Google first.");
+      emptyNode(potentialList, "Please sign in with Google first.");
+      emptyNode(longTermList, "Please sign in with Google first.");
+      emptyNode(notesList, "Please sign in with Google first.");
+      todoCount.textContent = "(0)";
+      pendingCount.textContent = "(0)";
+      longTermCount.textContent = "(0)";
+      notesCount.textContent = "(0)";
+      if (statusText) {{
+        meta.textContent = statusText;
+      }}
+    }}
+
     async function apiGet(url) {{
       const res = await fetch(url, {{ cache: "no-store", credentials: "same-origin" }});
       if (!res.ok) {{
@@ -1059,6 +1086,9 @@ def build_html(initial_project: str) -> str:
       signedIn = Boolean(data.logged_in);
       signedInEmail = String(data.email || "");
       updateAuthLabel();
+      if (!signedIn) {{
+        clearSignedOutView("Please sign in with Google to load dashboard data.");
+      }}
       return signedIn;
     }}
 
@@ -1074,7 +1104,11 @@ def build_html(initial_project: str) -> str:
     }}
 
     async function refreshActiveView() {{
-      if (refreshInFlight || document.hidden || !signedIn) return;
+      if (!signedIn) {{
+        clearSignedOutView("Please sign in with Google to load dashboard data.");
+        return;
+      }}
+      if (refreshInFlight || document.hidden) return;
       refreshInFlight = true;
       try {{
         if (currentProject) {{
@@ -1263,9 +1297,12 @@ def build_html(initial_project: str) -> str:
         if (ok) {{
           await ensureFirstLoginInitialized();
           await refreshActiveView();
+        }} else {{
+          clearSignedOutView(meta.textContent);
         }}
-      }} catch (_err) {{
-        // keep signed-out state on startup
+      }} catch (err) {{
+        const message = err && err.message ? err.message : "Please sign in with Google to load dashboard data.";
+        clearSignedOutView(message);
       }}
       setInterval(refreshActiveView, AUTO_REFRESH_MS);
     }}

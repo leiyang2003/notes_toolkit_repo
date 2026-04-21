@@ -40,6 +40,7 @@
       padding: 7px 10px;
       cursor: pointer;
       font-size: 13px;
+      max-width: 100%;
     }
     button.primary { background: #eaf2ff; border-color: #b8d0ff; color: #0b4db5; }
     .grid { margin-top: 14px; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
@@ -115,8 +116,13 @@
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 7px;
-      min-width: 180px;
+      min-width: 0;
       font-size: 13px;
+      max-width: 100%;
+    }
+    .inline > input[type="text"],
+    .inline > input[type="number"] {
+      flex: 1 1 220px;
     }
     .full { grid-column: 1 / -1; }
     .hidden { display: none; }
@@ -124,6 +130,33 @@
       .grid { grid-template-columns: 1fr; }
       .top-grid { grid-template-columns: 1fr; }
       .right-stack { grid-template-rows: auto auto; height: auto; }
+    }
+    @media (max-width: 640px) {
+      .wrap { margin: 12px auto; padding: 0 10px; }
+      .header { padding: 12px; border-radius: 12px; }
+      .header h1 { font-size: 19px; }
+      .toolbar { gap: 6px; }
+      .toolbar button { flex: 1 1 calc(50% - 6px); min-width: 130px; }
+      #auth-label, #current-project { flex: 1 1 100%; }
+      .card { padding: 10px; }
+      .row { padding: 7px; gap: 6px; }
+      .project-row { align-items: flex-start; flex-wrap: wrap; }
+      .project-row button { margin-left: auto; }
+      .todo-head { flex-wrap: wrap; align-items: center; row-gap: 4px; }
+      .todo-brief { white-space: normal; overflow-wrap: anywhere; }
+      .todo-seeall { min-width: 0; text-align: left; }
+      .row-text { white-space: normal; overflow-wrap: anywhere; text-overflow: unset; }
+      .potential-row { flex-direction: column; align-items: stretch; }
+      .potential-actions { order: 2; justify-content: flex-end; width: 100%; }
+      .inline > button { flex: 0 0 auto; }
+      .inline > input[type="text"],
+      .inline > input[type="number"] { flex: 1 1 100%; }
+    }
+    @media (max-width: 420px) {
+      .toolbar button { flex: 1 1 100%; min-width: 0; }
+      .todo-check { width: 20px; height: 20px; }
+      .title { font-size: 14px; }
+      .row, button, input[type="text"], input[type="number"] { font-size: 12px; }
     }
   </style>
 </head>
@@ -239,6 +272,8 @@
       try {
         if (projectName) {
           localStorage.setItem("notes_dashboard_last_project", projectName);
+        } else {
+          localStorage.removeItem("notes_dashboard_last_project");
         }
       } catch (_err) {
         // Storage access can fail in strict browser modes; ignore.
@@ -293,8 +328,7 @@
         signedIn = false;
         signedInEmail = "";
         updateAuthLabel();
-        meta.textContent = "Signed out.";
-        await loadHome().catch(() => null);
+        clearSignedOutView("Signed out.");
       });
 
       updateAuthLabel();
@@ -666,6 +700,32 @@
       node.appendChild(div);
     }
 
+    function clearSignedOutView(statusText) {
+      currentProject = "";
+      lastProject = "";
+      notesVisible = false;
+      writeStoredProject("");
+      expandedTodoKeys.clear();
+      expandedNoteKeys.clear();
+      currentProjectLabel.textContent = "Home View";
+      setToolbarState(true);
+      applyNotesVisibility();
+      homeView.classList.remove("hidden");
+      projectView.classList.add("hidden");
+      emptyNode(projectList, "Please sign in with Google first.");
+      emptyNode(todoList, "Please sign in with Google first.");
+      emptyNode(potentialList, "Please sign in with Google first.");
+      emptyNode(longTermList, "Please sign in with Google first.");
+      emptyNode(notesList, "Please sign in with Google first.");
+      todoCount.textContent = "(0)";
+      pendingCount.textContent = "(0)";
+      longTermCount.textContent = "(0)";
+      notesCount.textContent = "(0)";
+      if (statusText) {
+        meta.textContent = statusText;
+      }
+    }
+
     async function apiGet(url) {
       const res = await fetch(apiPath(url), { cache: "no-store", credentials: "include" });
       if (!res.ok) {
@@ -692,6 +752,9 @@
       signedIn = Boolean(data.logged_in);
       signedInEmail = String(data.email || "");
       updateAuthLabel();
+      if (!signedIn) {
+        clearSignedOutView("Please sign in with Google to load dashboard data.");
+      }
       return signedIn;
     }
 
@@ -707,7 +770,11 @@
     }
 
     async function refreshActiveView() {
-      if (refreshInFlight || document.hidden || !signedIn) return;
+      if (!signedIn) {
+        clearSignedOutView("Please sign in with Google to load dashboard data.");
+        return;
+      }
+      if (refreshInFlight || document.hidden) return;
       refreshInFlight = true;
       try {
         if (currentProject) {
@@ -787,7 +854,7 @@
         pending.forEach((p, idx) => {
           const pendingId = idx + 1;
           const row = document.createElement("div");
-          row.className = "row";
+          row.className = "row potential-row";
           setTooltip(row, p.text);
           row.innerHTML = `
             <div class="potential-actions">
@@ -896,9 +963,12 @@
         if (ok) {
           await ensureFirstLoginInitialized();
           await refreshActiveView();
+        } else {
+          clearSignedOutView(meta.textContent);
         }
-      } catch (_err) {
-        // keep signed-out state on startup
+      } catch (err) {
+        const message = err && err.message ? err.message : "Please sign in with Google to load dashboard data.";
+        clearSignedOutView(message);
       }
       setInterval(refreshActiveView, AUTO_REFRESH_MS);
     }
