@@ -275,9 +275,10 @@ def unscoped_project_name(user_id: str, scoped: str) -> str | None:
     return scoped[len(prefix) :]
 
 
-def build_html(initial_project: str, google_client_id: str) -> str:
+def build_html(initial_project: str, google_client_id: str, google_redirect_uri: str) -> str:
     init_json = json.dumps(initial_project, ensure_ascii=False)
     google_client_id_json = json.dumps(google_client_id or "", ensure_ascii=False)
+    google_redirect_uri_json = json.dumps(google_redirect_uri or "", ensure_ascii=False)
     template = """<!doctype html>
 <html lang=\"en\">
 <head>
@@ -485,6 +486,7 @@ def build_html(initial_project: str, google_client_id: str) -> str:
   <script>
     const initialProject = {init_json};
     const googleClientId = {google_client_id_json};
+    const googleRedirectUri = {google_redirect_uri_json};
     const meta = document.getElementById("meta");
     const currentProjectLabel = document.getElementById("current-project");
     const homeView = document.getElementById("home-view");
@@ -582,7 +584,7 @@ def build_html(initial_project: str, google_client_id: str) -> str:
           meta.textContent = "Server auth not configured: missing GOOGLE_CLIENT_ID.";
           return;
         }}
-        const redirectUri = `${{window.location.origin}}${{window.location.pathname}}`;
+        const redirectUri = String(googleRedirectUri || "").trim() || `${{window.location.origin}}/`;
         const state = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${{Date.now()}}`;
         localStorage.setItem("notes_google_oauth_state", state);
         const params = new URLSearchParams({{
@@ -1194,16 +1196,19 @@ def build_html(initial_project: str, google_client_id: str) -> str:
 """
     template = template.replace("{{", "{").replace("}}", "}")
     return (
-        template.replace("{init_json}", init_json).replace("{google_client_id_json}", google_client_id_json)
+        template.replace("{init_json}", init_json)
+        .replace("{google_client_id_json}", google_client_id_json)
+        .replace("{google_redirect_uri_json}", google_redirect_uri_json)
     )
 
 
 def main() -> int:
     args = parse_args()
     verifier = GoogleVerifier()
+    google_redirect_uri = os.environ.get("GOOGLE_REDIRECT_URI", "").strip()
     inferred = infer_project_from_notes(args.notes)
     initial_project = pick_initial_project(args.project or inferred)
-    html = build_html(initial_project, verifier.client_id).encode("utf-8")
+    html = build_html(initial_project, verifier.client_id, google_redirect_uri).encode("utf-8")
 
     stop_event = threading.Event()
 
@@ -1329,7 +1334,7 @@ def main() -> int:
                     self.send_header("Location", "/")
                     self.end_headers()
                     return
-                project_html = build_html(project_name, verifier.client_id).encode("utf-8")
+                project_html = build_html(project_name, verifier.client_id, google_redirect_uri).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(project_html)))

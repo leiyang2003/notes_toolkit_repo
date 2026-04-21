@@ -80,6 +80,7 @@ In Google Cloud Console (OAuth client):
 - Add your Render app domain to **Authorized JavaScript origins**.
 - Add your callback URL to **Authorized redirect URIs**:
   - `https://<your-render-domain>/`
+  - If you set `GOOGLE_REDIRECT_URI`, this value must exactly match that URI (including trailing slash if present).
 
 ### Runtime env vars
 
@@ -88,6 +89,7 @@ In Google Cloud Console (OAuth client):
 - `NOTES_VAULT_ROOT=/data/notes_vault`
 - `PROCESS_INTERVAL=120`
 - `GOOGLE_CLIENT_ID=<...>`
+- `GOOGLE_REDIRECT_URI=https://<your-render-domain>/` (optional but recommended)
 
 ## Install command wrappers
 
