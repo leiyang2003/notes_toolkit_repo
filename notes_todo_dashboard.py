@@ -283,7 +283,6 @@ def build_html(initial_project: str) -> str:
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>Notes Toolkit Dashboard</title>
-  <script src=\"https://accounts.google.com/gsi/client\" async defer></script>
   <style>
     :root {{
       --bg: #fffbe6;
@@ -414,8 +413,8 @@ def build_html(initial_project: str) -> str:
       <p id=\"meta\" class=\"meta\">Loading...</p>
       <div class=\"toolbar\" style=\"margin-top:8px; border-top:1px dashed var(--line); padding-top:8px;\">
         <input id=\"google-client-id\" type=\"text\" placeholder=\"Google Client ID\" style=\"min-width:260px;\" />
-        <button id=\"btn-google-init\">Init Google Sign-In</button>
-        <div id=\"google-signin\"></div>
+        <button id=\"btn-google-login\">Google Login (Redirect)</button>
+        <button id=\"btn-google-logout\">Logout</button>
         <span id=\"auth-label\" class=\"muted\">Not signed in</span>
       </div>
       <div class=\"toolbar\">
@@ -530,6 +529,25 @@ def build_html(initial_project: str) -> str:
     let authToken = "";
     const authLabel = document.getElementById("auth-label");
 
+    function parseJwtPayload(token) {{
+      try {{
+        const payload = (token.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/");
+        const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+        return JSON.parse(atob(padded));
+      }} catch (_err) {{
+        return {{}};
+      }}
+    }}
+
+    function updateAuthLabel() {{
+      if (!authToken) {{
+        authLabel.textContent = "Not signed in";
+        return;
+      }}
+      const payload = parseJwtPayload(authToken);
+      authLabel.textContent = `Signed in: ${{payload.email || payload.sub || "user"}}`;
+    }}
+
     function authHeaders() {{
       if (!authToken) throw new Error("Please sign in with Google first.");
       return {{
@@ -546,7 +564,25 @@ def build_html(initial_project: str) -> str:
         clientInput.value = "";
       }}
 
-      document.getElementById("btn-google-init").addEventListener("click", () => {{
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+      if (hash) {{
+        const params = new URLSearchParams(hash);
+        const idToken = params.get("id_token") || "";
+        const returnedState = params.get("state") || "";
+        const expectedState = localStorage.getItem("notes_google_oauth_state") || "";
+        if (idToken && (!expectedState || returnedState === expectedState)) {{
+          authToken = idToken;
+          localStorage.removeItem("notes_google_oauth_state");
+          updateAuthLabel();
+          ensureFirstLoginInitialized().then(() => refreshActiveView().catch(() => null));
+          history.replaceState(null, "", window.location.pathname + window.location.search);
+        }} else if (params.get("error")) {{
+          meta.textContent = `Google auth failed: ${{params.get("error")}}`;
+          history.replaceState(null, "", window.location.pathname + window.location.search);
+        }}
+      }}
+
+      document.getElementById("btn-google-login").addEventListener("click", () => {{
         const clientId = String(clientInput.value || "").trim();
         if (!clientId) {{
           meta.textContent = "Please input Google Client ID.";
@@ -557,28 +593,28 @@ def build_html(initial_project: str) -> str:
         }} catch (_err) {{
           // ignore storage failures
         }}
-        if (!window.google || !google.accounts || !google.accounts.id) {{
-          meta.textContent = "Google Sign-In SDK not ready yet.";
-          return;
-        }}
-        google.accounts.id.initialize({{
+        const redirectUri = `${{window.location.origin}}${{window.location.pathname}}`;
+        const state = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${{Date.now()}}`;
+        localStorage.setItem("notes_google_oauth_state", state);
+        const params = new URLSearchParams({{
           client_id: clientId,
-          callback: (resp) => {{
-            authToken = resp.credential || "";
-            try {{
-              const payload = JSON.parse(atob((authToken.split(".")[1] || "").replace(/-/g, "+").replace(/_/g, "/")));
-              authLabel.textContent = `Signed in: ${{payload.email || payload.sub}}`;
-            }} catch (_err) {{
-              authLabel.textContent = "Signed in";
-            }}
-            refreshActiveView().catch(() => null);
-          }}
+          redirect_uri: redirectUri,
+          response_type: "id_token",
+          scope: "openid email profile",
+          prompt: "select_account",
+          state,
+          nonce: state,
         }});
-        const holder = document.getElementById("google-signin");
-        holder.innerHTML = "";
-        google.accounts.id.renderButton(holder, {{ theme: "outline", size: "small" }});
-        authLabel.textContent = "Google Sign-In ready";
+        window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${{params.toString()}}`;
       }});
+
+      document.getElementById("btn-google-logout").addEventListener("click", () => {{
+        authToken = "";
+        updateAuthLabel();
+        meta.textContent = "Signed out.";
+      }});
+
+      updateAuthLabel();
     }}
 
     function esc(s) {{
@@ -967,6 +1003,17 @@ def build_html(initial_project: str) -> str:
       return data;
     }}
 
+    async function ensureFirstLoginInitialized() {{
+      try {{
+        const data = await apiPost("/api/init", {{ project_name: "home" }});
+        if (data.initialized) {{
+          meta.textContent = `Initialized first project: ${{data.project}}`;
+        }}
+      }} catch (err) {{
+        meta.textContent = `Init check failed: ${{err.message || err}}`;
+      }}
+    }}
+
     async function refreshActiveView() {{
       if (refreshInFlight || document.hidden || !authToken) return;
       refreshInFlight = true;
@@ -1337,6 +1384,34 @@ def main() -> int:
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path
+
+            if path == "/api/init":
+                try:
+                    user = self._auth()
+                except AuthError as exc:
+                    self._write_json({"ok": False, "message": str(exc)}, status=401)
+                    return
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                raw = self.rfile.read(length) if length > 0 else b"{}"
+                try:
+                    payload = json.loads(raw.decode("utf-8")) if raw else {}
+                except json.JSONDecodeError:
+                    self._write_json({"ok": False, "message": "Invalid JSON payload."}, status=400)
+                    return
+                project_name = str(payload.get("project_name", "home")).strip() or "home"
+                existing = self._user_projects_summary(user.user_id)
+                initialized = len(existing) == 0
+                scoped_project = scoped_project_name(user.user_id, project_name)
+                project_paths(scoped_project, create=True)
+                self._write_json(
+                    {
+                        "ok": True,
+                        "initialized": initialized,
+                        "project": project_name,
+                        "state": self._user_project_state(user.user_id, project_name),
+                    }
+                )
+                return
 
             if not (path.startswith("/api/project/") and path.endswith("/actions")):
                 self.send_response(404)

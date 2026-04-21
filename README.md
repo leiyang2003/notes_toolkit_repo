@@ -54,7 +54,7 @@ python3 notes_todo_dashboard.py --host 127.0.0.1 --port 8765
 3) In UI:
 
 - Enter `Google Client ID`
-- Click `Init Google Sign-In`
+- Click `Google Login (Redirect)` and complete Google authorization
 - Sign in, then use dashboard as usual
 
 ## Render deployment (single service)
@@ -79,6 +79,8 @@ This repo includes:
 In Google Cloud Console (OAuth client):
 
 - Add your Render app domain to **Authorized JavaScript origins**.
+- Add your callback URL to **Authorized redirect URIs**:
+  - `https://<your-render-domain>/`
 
 ### Runtime env vars
 
