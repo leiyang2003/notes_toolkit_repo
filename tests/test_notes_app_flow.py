@@ -8,6 +8,8 @@ from notes_app import (
     add_todo,
     approve_potential,
     complete_todo,
+    edit_note,
+    edit_todo,
     mark_todo_long_term,
     process_potential_todos,
     project_paths,
@@ -108,6 +110,28 @@ class NotesAppFlowTests(unittest.TestCase):
         promoted_after = len([item for item in state_after["potentials"] if item["status"] == "promoted"])
         self.assertEqual(pending_after, pending_before)
         self.assertGreaterEqual(promoted_after, promoted_before)
+
+    def test_edit_note_and_todo_persist_changes(self) -> None:
+        note = add_note(self.paths, "Need to call supplier", actor="tester")
+        self.assertTrue(note.ok)
+        state_with_note = project_state(self.paths)
+        note_target = next((item for item in state_with_note["notes"] if "Need to call supplier" in item["text"]), None)
+        self.assertIsNotNone(note_target)
+
+        note_edit = edit_note(self.paths, int(note_target["id"]), "Need to call supplier tomorrow", actor="tester")
+        self.assertTrue(note_edit.ok)
+        state_after_note_edit = project_state(self.paths)
+        self.assertTrue(any("Need to call supplier tomorrow" in item["text"] for item in state_after_note_edit["notes"]))
+
+        todo = add_todo(self.paths, "Need to draft roadmap", actor="tester")
+        self.assertTrue(todo.ok)
+        marked = mark_todo_long_term(self.paths, 1, actor="tester")
+        self.assertTrue(marked.ok)
+
+        todo_edit = edit_todo(self.paths, 1, "Draft roadmap v2", actor="tester")
+        self.assertTrue(todo_edit.ok)
+        state_after_todo_edit = project_state(self.paths)
+        self.assertTrue(any("[LT]" in item["text"] and "Draft roadmap v2" in item["text"] for item in state_after_todo_edit["todos"]))
 
 
 if __name__ == "__main__":

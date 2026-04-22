@@ -236,6 +236,15 @@ def summarize_task(text: str, max_len: int = 120) -> str:
     return short[: max_len - 1].rstrip() + "…"
 
 
+def _preserve_timestamp_prefix(old_content: str, new_content: str) -> str:
+    old_match = TIMESTAMP_PREFIX_RE.match((old_content or "").strip())
+    if not old_match:
+        return new_content
+    if TIMESTAMP_PREFIX_RE.match((new_content or "").strip()):
+        return new_content
+    return f"{old_match.group(0)}{new_content}".strip()
+
+
 def find_day_block(lines: list[str], date_str: str) -> Optional[tuple[int, int]]:
     day_start: Optional[int] = None
     for idx, line in enumerate(lines):
@@ -852,6 +861,191 @@ def dismiss_note(paths: ProjectPaths, note_id: int, *, actor: str = "user") -> A
         notes_anchor=anchor,
     )
     return ActionResult(ok=True, message=f"Note #{note_id} dismissed.", anchor=anchor)
+
+
+def edit_note(paths: ProjectPaths, note_id: int, text: str, *, actor: str = "user") -> ActionResult:
+    new_text = (text or "").strip()
+    if not new_text:
+        message = "Note text is empty."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_note",
+            target=f"note#{note_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    notes = parse_note_entries(paths.notes_path)
+    target = next((item for item in notes if item["id"] == note_id), None)
+    if target is None:
+        message = f"Note #{note_id} not found."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_note",
+            target=f"note#{note_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    lines = read_lines(paths.notes_path)
+    idx = target["line_no"] - 1
+    if idx < 0 or idx >= len(lines):
+        message = "Note line is out of range."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_note",
+            target=f"note#{note_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    old_line = lines[idx]
+    if not old_line.lstrip().startswith("- ") or CHECKBOX_RE.match(old_line):
+        message = "Target line is not an editable note entry."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_note",
+            target=f"note#{note_id}",
+            status="failed",
+            before_summary=summarize_task(old_line),
+            after_summary="-",
+            notes_anchor=f"active/NOTES.md:{target['line_no']}",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    old_content = old_line.strip()[2:].strip()
+    content_with_prefix = _preserve_timestamp_prefix(old_content, new_text)
+    new_line = re.sub(r"^(\s*-\s*)(.+?)\s*$", lambda m: f"{m.group(1)}{content_with_prefix}", old_line, count=1)
+    lines[idx] = new_line
+    write_lines(paths.notes_path, lines, snapshot_reason="edit_note")
+
+    anchor = f"active/NOTES.md:{target['line_no']}"
+    append_behavior_log(
+        paths,
+        actor=actor,
+        action="edit_note",
+        target=f"note#{note_id}",
+        status="done",
+        before_summary=summarize_task(old_line),
+        after_summary=summarize_task(new_line),
+        notes_anchor=anchor,
+    )
+    process_potential_todos(paths, actor="system", log_writes=True)
+    return ActionResult(ok=True, message=f"Note #{note_id} updated.", anchor=anchor)
+
+
+def edit_todo(paths: ProjectPaths, todo_id: int, text: str, *, actor: str = "user") -> ActionResult:
+    new_text = (text or "").strip()
+    if not new_text:
+        message = "Todo text is empty."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    todos = list_open_todos(paths)
+    target = next((item for item in todos if item["id"] == todo_id), None)
+    if target is None:
+        message = f"Todo #{todo_id} not found."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    lines = read_lines(paths.notes_path)
+    idx = target["line_no"] - 1
+    if idx < 0 or idx >= len(lines):
+        message = "Todo line is out of range."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    old_line = lines[idx]
+    match = CHECKBOX_RE.match(old_line)
+    if not match:
+        message = "Todo line format is invalid."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="edit_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary=summarize_task(old_line),
+            after_summary="-",
+            notes_anchor=f"active/NOTES.md:{target['line_no']}",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    old_content = (match.group(2) or "").strip()
+    content_with_prefix = _preserve_timestamp_prefix(old_content, new_text)
+    if is_long_term_todo(old_content) and not LONG_TERM_PREFIX_RE.match(content_with_prefix):
+        content_with_prefix = f"[LT] {content_with_prefix}".strip()
+
+    new_line = re.sub(
+        r"^(\s*-\s*\[[ xX]\]\s*)(.+?)\s*$",
+        lambda m: f"{m.group(1)}{content_with_prefix}",
+        old_line,
+        count=1,
+    )
+    lines[idx] = new_line
+    write_lines(paths.notes_path, lines, snapshot_reason="edit_todo")
+
+    anchor = f"active/NOTES.md:{target['line_no']}"
+    append_behavior_log(
+        paths,
+        actor=actor,
+        action="edit_todo",
+        target=f"todo#{todo_id}",
+        status="done",
+        before_summary=summarize_task(old_line),
+        after_summary=summarize_task(new_line),
+        notes_anchor=anchor,
+    )
+    process_potential_todos(paths, actor="system", log_writes=True)
+    return ActionResult(ok=True, message=f"Todo #{todo_id} updated.", anchor=anchor)
 
 
 def list_open_todos(paths: ProjectPaths) -> list[dict[str, Any]]:

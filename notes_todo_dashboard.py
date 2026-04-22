@@ -35,6 +35,8 @@ from notes_app import (
     complete_todo,
     default_project_name,
     dismiss_note,
+    edit_note,
+    edit_todo,
     list_projects,
     mark_todo_short_term,
     mark_todo_long_term,
@@ -495,6 +497,16 @@ def build_html(initial_project: str) -> str:
     .icon-btn.reject {{ color: #b42318; }}
     .icon-btn.longterm {{ color: #0b4db5; font-weight: 700; }}
     .icon-btn.shortterm {{ color: #0b4db5; font-weight: 700; }}
+    .icon-btn.edit {{ color: #6b4f1d; font-weight: 700; }}
+    .inline-edit-input {{
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px;
+      font-size: 13px;
+      margin-top: 6px;
+    }}
+    .edit-actions {{ margin-top: 6px; display: flex; justify-content: flex-end; gap: 6px; }}
     .muted {{ color: var(--muted); font-size: 12px; }}
     .id {{ color: #0b4db5; font-weight: 700; }}
     .status-pending {{ color: var(--warn); }}
@@ -972,6 +984,7 @@ def build_html(initial_project: str) -> str:
             <span class="id">#${{n.id}}</span>
             <span class="todo-brief">${{boldImportantNouns(prepared.brief || "(empty)")}}</span>
             <button type="button" class="todo-seeall">See all</button>
+            <button type="button" class="icon-btn edit note-edit" aria-label="Edit note #${{n.id}}" title="Edit note">E</button>
           </div>
           <div class="todo-full hidden-inline">${{boldImportantNouns(prepared.full || "(empty)")}}</div>
           <div class="muted notes-meta">section: ${{esc(n.section || "-")}} | line: ${{n.line_no}}</div>
@@ -979,6 +992,7 @@ def build_html(initial_project: str) -> str:
 
         const seeAllBtn = right.querySelector(".todo-seeall");
         const fullNode = right.querySelector(".todo-full");
+        const noteEditBtn = right.querySelector(".note-edit");
         const key = noteKey(n);
         if (expandedNoteKeys.has(key)) {{
           fullNode.classList.remove("hidden-inline");
@@ -993,6 +1007,53 @@ def build_html(initial_project: str) -> str:
             expandedNoteKeys.add(key);
           }}
         }});
+        if (noteEditBtn) {{
+          noteEditBtn.addEventListener("click", () => {{
+            const checkbox = left.querySelector("input");
+            if (checkbox) {{
+              checkbox.disabled = true;
+            }}
+            right.innerHTML = `
+              <div class="todo-head">
+                <span class="id">#${{n.id}}</span>
+                <span class="muted">Editing note</span>
+              </div>
+              <input type="text" class="inline-edit-input note-edit-input" placeholder="Update note text" />
+              <div class="edit-actions">
+                <button type="button" class="save-note-edit">Save</button>
+                <button type="button" class="cancel-note-edit">Cancel</button>
+              </div>
+            `;
+            const input = right.querySelector(".note-edit-input");
+            const saveBtn = right.querySelector(".save-note-edit");
+            const cancelBtn = right.querySelector(".cancel-note-edit");
+            input.value = stripNoteMeta(n.text);
+            input.focus();
+            input.select();
+
+            saveBtn.addEventListener("click", () => {{
+              const value = input.value.trim();
+              if (!value) {{
+                alert("Note text cannot be empty.");
+                return;
+              }}
+              saveBtn.disabled = true;
+              cancelBtn.disabled = true;
+              runAction("edit_note", {{ id: n.id, text: value }});
+            }});
+            input.addEventListener("keydown", (ev) => {{
+              if (ev.key === "Enter") {{
+                ev.preventDefault();
+                saveBtn.click();
+              }}
+            }});
+            cancelBtn.addEventListener("click", () => {{
+              loadProject(currentProject).catch((err) => {{
+                meta.textContent = err.message || String(err);
+              }});
+            }});
+          }});
+        }}
         row.appendChild(left);
         row.appendChild(right);
         notesList.appendChild(row);
@@ -1036,6 +1097,7 @@ def build_html(initial_project: str) -> str:
         const longTermInlineMarkup = allowLongTermButton && fixedRowHeight
           ? `<button type="button" class="icon-btn longterm todo-longterm todo-longterm-inline" aria-label="Mark todo #${{t.id}} as long-term" title="Mark as long-term">L</button>`
           : "";
+        const editHeadMarkup = `<button type="button" class="icon-btn edit todo-edit" aria-label="Edit todo #${{t.id}}" title="Edit todo">E</button>`;
         const footerButtons = [];
         if (allowLongTermButton && !fixedRowHeight) {{
           footerButtons.push(`<button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${{t.id}} as long-term" title="Mark as long-term">L</button>`);
@@ -1049,6 +1111,7 @@ def build_html(initial_project: str) -> str:
             <span class="id">#${{t.id}}</span>
             <span class="todo-brief">${{boldImportantNouns(summary.brief || "(empty)")}}</span>
             ${{seeAllMarkup}}
+            ${{editHeadMarkup}}
             ${{longTermInlineMarkup}}
           </div>
           ${{fullMarkup}}
@@ -1059,6 +1122,7 @@ def build_html(initial_project: str) -> str:
         const footerNode = right.querySelector(".todo-footer");
         const longTermBtn = right.querySelector(".todo-longterm");
         const shortTermBtn = right.querySelector(".todo-shortterm");
+        const editBtn = right.querySelector(".todo-edit");
         const key = todoKey(t);
         if (!fixedRowHeight && expandedTodoKeys.has(key)) {{
           fullNode.classList.remove("hidden-inline");
@@ -1093,6 +1157,59 @@ def build_html(initial_project: str) -> str:
           shortTermBtn.addEventListener("click", () => {{
             shortTermBtn.disabled = true;
             runAction("mark_short_term_todo", {{ id: t.id }});
+          }});
+        }}
+        if (editBtn) {{
+          editBtn.addEventListener("click", () => {{
+            const checkbox = left.querySelector("input");
+            if (checkbox) {{
+              checkbox.disabled = true;
+            }}
+            if (longTermBtn) {{
+              longTermBtn.disabled = true;
+            }}
+            if (shortTermBtn) {{
+              shortTermBtn.disabled = true;
+            }}
+            right.innerHTML = `
+              <div class="todo-head">
+                <span class="id">#${{t.id}}</span>
+                <span class="muted">Editing todo</span>
+              </div>
+              <input type="text" class="inline-edit-input todo-edit-input" placeholder="Update todo text" />
+              <div class="edit-actions">
+                <button type="button" class="save-todo-edit">Save</button>
+                <button type="button" class="cancel-todo-edit">Cancel</button>
+              </div>
+            `;
+            const input = right.querySelector(".todo-edit-input");
+            const saveBtn = right.querySelector(".save-todo-edit");
+            const cancelBtn = right.querySelector(".cancel-todo-edit");
+            input.value = stripTodoMeta(t.text).replace(/^\\[LT\\]\\s*/i, "");
+            input.focus();
+            input.select();
+
+            saveBtn.addEventListener("click", () => {{
+              const value = input.value.trim();
+              if (!value) {{
+                alert("Todo text cannot be empty.");
+                return;
+              }}
+              saveBtn.disabled = true;
+              cancelBtn.disabled = true;
+              runAction("edit_todo", {{ id: t.id, text: value }});
+            }});
+            input.addEventListener("keydown", (ev) => {{
+              if (ev.key === "Enter") {{
+                ev.preventDefault();
+                saveBtn.click();
+              }}
+            }});
+            cancelBtn.addEventListener("click", () => {{
+              loadProject(currentProject).catch((err) => {{
+                meta.textContent = err.message || String(err);
+              }});
+            }});
           }});
         }}
 
@@ -1866,6 +1983,10 @@ def main() -> int:
                     result = mark_todo_short_term(paths, int(payload.get("id")), actor=actor)
                 elif action == "dismiss_note":
                     result = dismiss_note(paths, int(payload.get("id")), actor=actor)
+                elif action == "edit_note":
+                    result = edit_note(paths, int(payload.get("id")), str(payload.get("text", "")), actor=actor)
+                elif action == "edit_todo":
+                    result = edit_todo(paths, int(payload.get("id")), str(payload.get("text", "")), actor=actor)
                 else:
                     self._write_json({"ok": False, "message": f"Unsupported action: {action}"}, status=400)
                     return
