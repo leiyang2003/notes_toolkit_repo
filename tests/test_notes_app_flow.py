@@ -8,6 +8,7 @@ from notes_app import (
     add_todo,
     approve_potential,
     complete_todo,
+    mark_todo_long_term,
     process_potential_todos,
     project_paths,
     project_state,
@@ -86,6 +87,27 @@ class NotesAppFlowTests(unittest.TestCase):
         state_four = project_state(self.paths)
         statuses = {item["status"] for item in state_four["potentials"]}
         self.assertIn("rejected", statuses)
+
+    def test_mark_long_term_does_not_recreate_pending_potential(self) -> None:
+        note = add_note(self.paths, "Need to call supplier", actor="tester")
+        self.assertTrue(note.ok)
+
+        approve = approve_potential(self.paths, 1, actor="tester")
+        self.assertTrue(approve.ok)
+
+        state_before = project_state(self.paths)
+        pending_before = len([item for item in state_before["potentials"] if item["status"] == "pending"])
+        promoted_before = len([item for item in state_before["potentials"] if item["status"] == "promoted"])
+        self.assertGreaterEqual(promoted_before, 1)
+
+        mark = mark_todo_long_term(self.paths, 1, actor="tester")
+        self.assertTrue(mark.ok)
+
+        state_after = project_state(self.paths)
+        pending_after = len([item for item in state_after["potentials"] if item["status"] == "pending"])
+        promoted_after = len([item for item in state_after["potentials"] if item["status"] == "promoted"])
+        self.assertEqual(pending_after, pending_before)
+        self.assertGreaterEqual(promoted_after, promoted_before)
 
 
 if __name__ == "__main__":

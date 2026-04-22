@@ -27,6 +27,7 @@ POTENTIAL_RE = re.compile(
 )
 TIMESTAMP_PREFIX_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*")
 HIDDEN_NOTE_RE = re.compile(r"^\[hidden\]\s*", re.IGNORECASE)
+LONG_TERM_PREFIX_RE = re.compile(r"^\[LT\]\s*", re.IGNORECASE)
 ACTION_START_RE = re.compile(
     r"^(i\s+)?(need to|have to|must|should|plan to|remember to|go to|buy|visit|call|schedule)\b",
     re.IGNORECASE,
@@ -220,6 +221,7 @@ def write_lines(path: Path, lines: list[str], *, snapshot_reason: str = "") -> N
 
 def normalize_text(text: str) -> str:
     cleaned = TIMESTAMP_PREFIX_RE.sub("", text.strip())
+    cleaned = LONG_TERM_PREFIX_RE.sub("", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
     return cleaned
 
@@ -666,6 +668,15 @@ def process_potential_todos(
         current_potential.append({"status": "pending", "timestamp": now_ts(), "text": text})
         existing_norms.add(norm)
         added_count += 1
+
+    # Section indices may shift after todo insertions above, so resolve again
+    # before rewriting Potential To Do content.
+    block = find_day_block(lines, date_str)
+    if block is None:
+        raise RuntimeError("Day block missing during potential rewrite.")
+    potential = find_section(lines, block[0], block[1], "Potential To Do")
+    if potential is None:
+        raise RuntimeError("Potential section missing during potential rewrite.")
 
     potential_lines = [
         "- Status guide: `[pending]` -> `[approve]` to promote, `[rejected]` to ignore.",
