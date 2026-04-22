@@ -1002,6 +1002,97 @@ def mark_todo_long_term(paths: ProjectPaths, todo_id: int, *, actor: str = "user
     return ActionResult(ok=True, message=f"Todo #{todo_id} marked as long-term.", anchor=anchor)
 
 
+def mark_todo_short_term(paths: ProjectPaths, todo_id: int, *, actor: str = "user") -> ActionResult:
+    todos = list_open_todos(paths)
+    target = next((item for item in todos if item["id"] == todo_id), None)
+    if target is None:
+        message = f"Todo #{todo_id} not found."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="mark_short_term_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    lines = read_lines(paths.notes_path)
+    idx = target["line_no"] - 1
+    if idx < 0 or idx >= len(lines):
+        message = "Todo line is out of range."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="mark_short_term_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary="-",
+            after_summary="-",
+            notes_anchor="active/NOTES.md",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    old_line = lines[idx]
+    match = CHECKBOX_RE.match(old_line)
+    if not match:
+        message = "Todo line format is invalid."
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="mark_short_term_todo",
+            target=f"todo#{todo_id}",
+            status="failed",
+            before_summary=summarize_task(old_line),
+            after_summary="-",
+            notes_anchor=f"active/NOTES.md:{target['line_no']}",
+            error=message,
+        )
+        return ActionResult(ok=False, message=message)
+
+    content = (match.group(2) or "").strip()
+    anchor = f"active/NOTES.md:{target['line_no']}"
+    short_term_content = re.sub(r"^\[LT\]\s*", "", content, flags=re.IGNORECASE).strip()
+    if short_term_content == content:
+        append_behavior_log(
+            paths,
+            actor=actor,
+            action="mark_short_term_todo",
+            target=f"todo#{todo_id}",
+            status="done",
+            before_summary=summarize_task(old_line),
+            after_summary=summarize_task(old_line),
+            notes_anchor=anchor,
+        )
+        return ActionResult(ok=True, message=f"Todo #{todo_id} has no [LT] marker.", anchor=anchor)
+
+    new_line = re.sub(
+        r"^(\s*-\s*\[[ xX]\]\s*)(.+?)\s*$",
+        lambda m: f"{m.group(1)}{short_term_content}",
+        old_line,
+        count=1,
+    )
+    lines[idx] = new_line
+    write_lines(paths.notes_path, lines, snapshot_reason="mark_todo_short_term")
+
+    append_behavior_log(
+        paths,
+        actor=actor,
+        action="mark_short_term_todo",
+        target=f"todo#{todo_id}",
+        status="done",
+        before_summary=summarize_task(old_line),
+        after_summary=summarize_task(new_line),
+        notes_anchor=anchor,
+    )
+    process_potential_todos(paths, actor="system", log_writes=True)
+    return ActionResult(ok=True, message=f"Todo #{todo_id} moved back to open todos.", anchor=anchor)
+
+
 def list_pending_potentials(paths: ProjectPaths) -> list[dict[str, Any]]:
     items = parse_potential_items(paths.notes_path)
     pending = [item for item in items if item["status"] == "pending"]
