@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -112,7 +112,7 @@ class DashboardHttpContractTests(unittest.TestCase):
             return exc.code, (json.loads(body) if body else {})
 
     def test_health_and_session_contract(self) -> None:
-        code, health = self._json_get("/")
+        code, health = self._json_get("/health")
         self.assertEqual(code, 200)
         self.assertTrue(health["ok"])
         self.assertEqual(health["service"], "notes-toolkit-backend")
@@ -142,6 +142,68 @@ class DashboardHttpContractTests(unittest.TestCase):
         self.assertEqual(code, 500)
         self.assertFalse(body["ok"])
         self.assertIn("Google OAuth is not configured", body["message"])
+
+    def test_root_redirects_to_frontend_when_configured(self) -> None:
+        target = "https://frontend.example.test"
+        env = os.environ.copy()
+        env["NOTES_VAULT_ROOT"] = str(self.vault_root)
+        env["ALLOW_INSECURE_GOOGLE"] = "1"
+        env["FRONTEND_APP_URL"] = target
+        env.pop("GOOGLE_CLIENT_ID", None)
+        env.pop("GOOGLE_CLIENT_SECRET", None)
+        env.pop("GOOGLE_REDIRECT_URI", None)
+
+        try:
+            alt_port = _free_port()
+        except PermissionError as exc:
+            self.skipTest(f"Socket bind not permitted in current environment: {exc}")
+
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                str(SERVER_PATH),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(alt_port),
+                "--process-interval",
+                "3600",
+            ],
+            cwd=str(REPO_ROOT),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                try:
+                    with urlopen(f"http://127.0.0.1:{alt_port}/health", timeout=1.5) as resp:
+                        if resp.status == 200:
+                            break
+                except Exception:
+                    time.sleep(0.2)
+            else:
+                raise AssertionError("Server failed to start within timeout.")
+
+            class _NoRedirect(HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+                    return None
+
+            opener = build_opener(_NoRedirect)
+            req = Request(f"http://127.0.0.1:{alt_port}/", method="GET")
+            with self.assertRaises(HTTPError) as ctx:
+                opener.open(req, timeout=5)
+            self.assertEqual(ctx.exception.code, 302)
+            self.assertEqual(ctx.exception.headers.get("Location"), target + "/")
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
 
 if __name__ == "__main__":

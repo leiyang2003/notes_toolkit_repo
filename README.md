@@ -20,6 +20,9 @@ Split frontend/backend Notes Toolkit with Google OAuth redirect login and per-us
 
 - Frontend is dynamic service: `frontend/app.py` (serves `frontend/index.html` with runtime config).
 - Backend is API/Auth service: `notes_todo_dashboard.py`.
+- Backend root behavior:
+  - `GET /health` returns backend health JSON.
+  - `GET /` redirects to `FRONTEND_APP_URL` when configured (otherwise returns health JSON).
 - Login flow is server-side OAuth:
   - Frontend redirects to `/auth/google/login`.
   - Backend handles `/auth/google/callback`, then sets session cookie.
@@ -49,6 +52,7 @@ export GOOGLE_CLIENT_ID="<your-google-oauth-client-id>"
 export GOOGLE_CLIENT_SECRET="<your-google-oauth-client-secret>"
 export GOOGLE_REDIRECT_URI="http://127.0.0.1:8765/auth/google/callback"
 export FRONTEND_ORIGIN="http://127.0.0.1:5500"
+export FRONTEND_APP_URL="http://127.0.0.1:5500"
 export COOKIE_SAMESITE="Lax"
 python3 notes_todo_dashboard.py --host 127.0.0.1 --port 8765
 ```

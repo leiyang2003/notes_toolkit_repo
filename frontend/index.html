@@ -289,6 +289,7 @@
     let lastProject = initialProject || storedProject || "";
     let notesVisible = false;
     let refreshInFlight = false;
+    let editInProgress = false;
     const expandedTodoKeys = new Set();
     const expandedNoteKeys = new Set();
     const AUTO_REFRESH_MS = 2000;
@@ -621,6 +622,7 @@
         });
         if (noteEditBtn) {
           noteEditBtn.addEventListener("click", () => {
+            editInProgress = true;
             const checkbox = left.querySelector("input");
             if (checkbox) {
               checkbox.disabled = true;
@@ -651,6 +653,7 @@
               }
               saveBtn.disabled = true;
               cancelBtn.disabled = true;
+              editInProgress = false;
               runAction("edit_note", { id: n.id, text: value });
             });
             input.addEventListener("keydown", (ev) => {
@@ -660,6 +663,7 @@
               }
             });
             cancelBtn.addEventListener("click", () => {
+              editInProgress = false;
               loadProject(currentProject).catch((err) => {
                 meta.textContent = err.message || String(err);
               });
@@ -742,6 +746,7 @@
         }
         if (editBtn) {
           editBtn.addEventListener("click", () => {
+            editInProgress = true;
             const checkbox = left.querySelector("input");
             if (checkbox) {
               checkbox.disabled = true;
@@ -775,6 +780,7 @@
               }
               saveBtn.disabled = true;
               cancelBtn.disabled = true;
+              editInProgress = false;
               runAction("edit_todo", { id: t.id, text: value });
             });
             input.addEventListener("keydown", (ev) => {
@@ -784,6 +790,7 @@
               }
             });
             cancelBtn.addEventListener("click", () => {
+              editInProgress = false;
               loadProject(currentProject).catch((err) => {
                 meta.textContent = err.message || String(err);
               });
@@ -879,6 +886,7 @@
         clearSignedOutView("Please sign in with Google to load dashboard data.");
         return;
       }
+      if (editInProgress) return;
       if (refreshInFlight || document.hidden) return;
       refreshInFlight = true;
       try {
