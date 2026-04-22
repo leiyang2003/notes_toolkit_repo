@@ -31,7 +31,7 @@
       box-shadow: 0 6px 20px rgba(42, 57, 80, 0.08);
     }
     .header h1 { margin: 0 0 8px; font-size: 22px; }
-    .meta { margin: 0; color: var(--muted); font-size: 13px; }
+    .meta { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; word-break: break-word; }
     .toolbar { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
     button {
       border: 1px solid var(--line);
@@ -60,6 +60,7 @@
       justify-content: space-between;
       gap: 8px;
       align-items: flex-start;
+      min-width: 0;
     }
     .row-main { min-width: 0; flex: 1; }
     .row-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -68,9 +69,17 @@
     .todo-check { width: 18px; height: 18px; cursor: pointer; }
     .todo-row { align-items: flex-start; }
     .todo-left { flex: 0 0 auto; padding-top: 2px; }
-    .todo-main { min-width: 0; flex: 1; }
-    .todo-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-    .todo-brief { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .todo-main { min-width: 0; flex: 1; overflow: hidden; }
+    .todo-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; width: 100%; }
+    .todo-brief {
+      flex: 1 1 auto;
+      display: block;
+      min-width: 0;
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .todo-seeall {
       border: none;
       background: transparent;
@@ -82,7 +91,14 @@
       min-width: 52px;
       text-align: right;
     }
-    .todo-full { margin-top: 6px; font-size: 12px; line-height: 1.4; white-space: normal; }
+    .todo-full {
+      margin-top: 6px;
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .todo-footer { margin-top: 6px; display: flex; justify-content: flex-end; }
     .hidden-inline { display: none; }
     .notes-row .todo-brief { font-weight: 500; }
