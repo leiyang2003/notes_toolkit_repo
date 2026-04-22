@@ -36,6 +36,7 @@ from notes_app import (
     default_project_name,
     dismiss_note,
     list_projects,
+    mark_todo_short_term,
     mark_todo_long_term,
     process_potential_todos,
     project_paths,
@@ -422,11 +423,20 @@ def build_html(initial_project: str) -> str:
     }}
     button.primary {{ background: #eaf2ff; border-color: #b8d0ff; color: #0b4db5; }}
     .grid {{ margin-top: 14px; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }}
-    .top-grid {{ grid-column: 1 / -1; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; align-items: stretch; }}
-    .right-stack {{ display: grid; gap: 12px; grid-template-rows: 1fr 1fr; height: 100%; min-height: 0; }}
+    .top-grid {{
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+      align-items: stretch;
+      height: calc(100vh - 220px);
+      min-height: 420px;
+    }}
+    .top-grid > * {{ min-height: 0; }}
+    .right-stack {{ display: grid; gap: 12px; grid-template-rows: 3fr 2fr; height: 100%; min-height: 0; }}
     .card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }}
     .stack-card {{ display: flex; flex-direction: column; min-height: 0; }}
-    .stack-card .list {{ min-height: 0; overflow: auto; }}
+    .stack-card .list {{ flex: 1 1 auto; min-height: 0; overflow: auto; }}
     .title {{ margin: 0 0 8px; font-size: 15px; font-weight: 700; }}
     .list {{ display: grid; gap: 7px; }}
     .row {{
@@ -484,6 +494,7 @@ def build_html(initial_project: str) -> str:
     .icon-btn.accept {{ color: var(--ok); }}
     .icon-btn.reject {{ color: #b42318; }}
     .icon-btn.longterm {{ color: #0b4db5; font-weight: 700; }}
+    .icon-btn.shortterm {{ color: #0b4db5; font-weight: 700; }}
     .muted {{ color: var(--muted); font-size: 12px; }}
     .id {{ color: #0b4db5; font-weight: 700; }}
     .status-pending {{ color: var(--warn); }}
@@ -499,9 +510,44 @@ def build_html(initial_project: str) -> str:
     }}
     .full {{ grid-column: 1 / -1; }}
     .hidden {{ display: none; }}
+    #todo-list, #long-term-list, #potential-list {{ min-height: 0; overflow: auto; }}
+    #todo-list {{
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      justify-content: flex-start;
+      align-items: stretch;
+    }}
+    #todo-list .todo-row.fixed-height-row {{
+      height: 52px;
+      min-height: 52px;
+      max-height: 52px;
+      align-items: center;
+      overflow: hidden;
+    }}
+    #todo-list .todo-row.fixed-height-row .todo-left {{
+      padding-top: 0;
+      display: flex;
+      align-items: center;
+    }}
+    #todo-list .todo-row.fixed-height-row .todo-main {{
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }}
+    #todo-list .todo-row.fixed-height-row .todo-head {{
+      width: 100%;
+      align-items: center;
+    }}
+    #todo-list .todo-row.fixed-height-row .todo-seeall,
+    #todo-list .todo-row.fixed-height-row .todo-full,
+    #todo-list .todo-row.fixed-height-row .todo-footer {{
+      display: none !important;
+    }}
+    #todo-list .todo-row.fixed-height-row .todo-longterm-inline {{ margin-left: auto; flex: 0 0 auto; }}
     @media (max-width: 900px) {{
       .grid {{ grid-template-columns: 1fr; }}
-      .top-grid {{ grid-template-columns: 1fr; }}
+      .top-grid {{ grid-template-columns: 1fr; height: auto; min-height: 0; }}
       .right-stack {{ grid-template-rows: auto auto; height: auto; }}
     }}
   </style>
@@ -534,19 +580,19 @@ def build_html(initial_project: str) -> str:
 
     <div id=\"project-view\" class=\"grid hidden\">
       <div class=\"top-grid\">
-        <section id=\"open-todos-card\" class=\"card\">
+        <section id=\"open-todos-card\" class=\"card stack-card\">
           <h2 class=\"title\">Open Todos <span id=\"todo-count\" class=\"muted\"></span></h2>
           <div id=\"todo-list\" class=\"list\"></div>
         </section>
 
         <div class=\"right-stack\">
           <section class=\"card stack-card\">
-            <h2 class=\"title\">Potential <span id=\"pending-count\" class=\"muted\"></span></h2>
-            <div id=\"potential-list\" class=\"list\"></div>
-          </section>
-          <section class=\"card stack-card\">
             <h2 class=\"title\">Long-term Todos <span id=\"long-term-count\" class=\"muted\"></span></h2>
             <div id=\"long-term-list\" class=\"list\"></div>
+          </section>
+          <section class=\"card stack-card\">
+            <h2 class=\"title\">Potential <span id=\"pending-count\" class=\"muted\"></span></h2>
+            <div id=\"potential-list\" class=\"list\"></div>
           </section>
         </div>
       </div>
@@ -955,6 +1001,8 @@ def build_html(initial_project: str) -> str:
 
     function renderTodoRows(targetList, todos, emptyText, options = {{}}) {{
       const allowLongTermButton = Boolean(options.allowLongTermButton);
+      const allowShortTermButton = Boolean(options.allowShortTermButton);
+      const fixedRowHeight = Boolean(options.fixedRowHeight);
       targetList.innerHTML = "";
       if (!todos.length) {{
         emptyNode(targetList, emptyText);
@@ -965,6 +1013,9 @@ def build_html(initial_project: str) -> str:
         const summary = summarizeTodo(t.text);
         const row = document.createElement("div");
         row.className = "row todo-row";
+        if (fixedRowHeight) {{
+          row.classList.add("fixed-height-row");
+        }}
         if (isRecoveredEntry(t.text)) {{
           row.classList.add("recovered-row");
         }}
@@ -980,43 +1031,68 @@ def build_html(initial_project: str) -> str:
 
         const right = document.createElement("div");
         right.className = "todo-main";
+        const seeAllMarkup = fixedRowHeight ? "" : `<button type="button" class="todo-seeall">See all</button>`;
+        const fullMarkup = fixedRowHeight ? "" : `<div class="todo-full hidden-inline">${{boldImportantNouns(summary.full || "(empty)")}}</div>`;
+        const longTermInlineMarkup = allowLongTermButton && fixedRowHeight
+          ? `<button type="button" class="icon-btn longterm todo-longterm todo-longterm-inline" aria-label="Mark todo #${{t.id}} as long-term" title="Mark as long-term">L</button>`
+          : "";
+        const footerButtons = [];
+        if (allowLongTermButton && !fixedRowHeight) {{
+          footerButtons.push(`<button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${{t.id}} as long-term" title="Mark as long-term">L</button>`);
+        }}
+        if (allowShortTermButton && !fixedRowHeight) {{
+          footerButtons.push(`<button type="button" class="icon-btn shortterm todo-shortterm" aria-label="Move long-term todo #${{t.id}} back to open todos" title="Move back to open todos">S</button>`);
+        }}
+        const footerMarkup = footerButtons.length ? `<div class="todo-footer hidden-inline">${{footerButtons.join("")}}</div>` : "";
         right.innerHTML = `
           <div class="todo-head">
             <span class="id">#${{t.id}}</span>
             <span class="todo-brief">${{boldImportantNouns(summary.brief || "(empty)")}}</span>
-            <button type="button" class="todo-seeall">See all</button>
+            ${{seeAllMarkup}}
+            ${{longTermInlineMarkup}}
           </div>
-          <div class="todo-full hidden-inline">${{boldImportantNouns(summary.full || "(empty)")}}</div>
-          ${{allowLongTermButton ? `<div class="todo-footer hidden-inline"><button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${{t.id}} as long-term" title="Mark as long-term">L</button></div>` : ""}}
+          ${{fullMarkup}}
+          ${{footerMarkup}}
         `;
         const seeAllBtn = right.querySelector(".todo-seeall");
         const fullNode = right.querySelector(".todo-full");
         const footerNode = right.querySelector(".todo-footer");
         const longTermBtn = right.querySelector(".todo-longterm");
+        const shortTermBtn = right.querySelector(".todo-shortterm");
         const key = todoKey(t);
-        if (expandedTodoKeys.has(key)) {{
+        if (!fixedRowHeight && expandedTodoKeys.has(key)) {{
           fullNode.classList.remove("hidden-inline");
           seeAllBtn.textContent = "See less";
           if (footerNode) {{
             footerNode.classList.remove("hidden-inline");
           }}
         }}
-        seeAllBtn.addEventListener("click", () => {{
-          const hidden = fullNode.classList.toggle("hidden-inline");
-          seeAllBtn.textContent = hidden ? "See all" : "See less";
-          if (footerNode) {{
-            footerNode.classList.toggle("hidden-inline", hidden);
-          }}
-          if (hidden) {{
-            expandedTodoKeys.delete(key);
-          }} else {{
-            expandedTodoKeys.add(key);
-          }}
-        }});
+        if (seeAllBtn && fullNode) {{
+          seeAllBtn.addEventListener("click", () => {{
+            const hidden = fullNode.classList.toggle("hidden-inline");
+            seeAllBtn.textContent = hidden ? "See all" : "See less";
+            if (footerNode) {{
+              footerNode.classList.toggle("hidden-inline", hidden);
+            }}
+            if (hidden) {{
+              expandedTodoKeys.delete(key);
+            }} else {{
+              expandedTodoKeys.add(key);
+            }}
+          }});
+        }} else if (fixedRowHeight) {{
+          expandedTodoKeys.delete(key);
+        }}
         if (longTermBtn) {{
           longTermBtn.addEventListener("click", () => {{
             longTermBtn.disabled = true;
             runAction("mark_long_term_todo", {{ id: t.id }});
+          }});
+        }}
+        if (shortTermBtn) {{
+          shortTermBtn.addEventListener("click", () => {{
+            shortTermBtn.disabled = true;
+            runAction("mark_short_term_todo", {{ id: t.id }});
           }});
         }}
 
@@ -1177,8 +1253,8 @@ def build_html(initial_project: str) -> str:
       longTermCount.textContent = `(${longTermTodos.length})`;
       renderNotesEntries(Array.isArray(data.notes) ? data.notes : []);
 
-      renderTodoRows(todoList, openTodos, "No open todos.", {{ allowLongTermButton: true }});
-      renderTodoRows(longTermList, longTermTodos, "No long-term todos.");
+      renderTodoRows(todoList, openTodos, "No open todos.", {{ allowLongTermButton: true, fixedRowHeight: true }});
+      renderTodoRows(longTermList, longTermTodos, "No long-term todos.", {{ allowShortTermButton: true }});
 
       potentialList.innerHTML = "";
       const pending = data.potentials.filter((p) => p.status === "pending");
@@ -1786,6 +1862,8 @@ def main() -> int:
                     result = complete_todo(paths, int(payload.get("id")), actor=actor)
                 elif action == "mark_long_term_todo":
                     result = mark_todo_long_term(paths, int(payload.get("id")), actor=actor)
+                elif action == "mark_short_term_todo":
+                    result = mark_todo_short_term(paths, int(payload.get("id")), actor=actor)
                 elif action == "dismiss_note":
                     result = dismiss_note(paths, int(payload.get("id")), actor=actor)
                 else:
