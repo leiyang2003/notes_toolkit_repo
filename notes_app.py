@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -37,6 +40,8 @@ LONG_TERM_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 LOG_ROW_RE = re.compile(r"^\|\s*(\d+)\s*\|")
+ACTIONABLE_YES_RE = re.compile(r"\b(yes|true|actionable|todo)\b", re.IGNORECASE)
+ACTIONABLE_NO_RE = re.compile(r"\b(no|false|not actionable|non-actionable)\b", re.IGNORECASE)
 
 SKIP_SECTIONS = {"Bugs / Follow-ups", "Potential To Do", "Session Handoff"}
 
@@ -490,13 +495,101 @@ def parse_done_items(done_path: Path) -> list[dict[str, Any]]:
     return items
 
 
-def is_actionable(text: str) -> bool:
+def _is_actionable_heuristic(text: str) -> bool:
     lowered = text.lower().strip()
     if not lowered or lowered.endswith("?"):
         return False
     if ACTION_START_RE.search(lowered):
         return True
     return "todo" in lowered or "to do" in lowered
+
+
+def _extract_response_text(payload: dict[str, Any]) -> str:
+    direct = payload.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return ""
+
+    texts: list[str] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            txt = part.get("text")
+            if isinstance(txt, str) and txt.strip():
+                texts.append(txt.strip())
+    return " ".join(texts).strip()
+
+
+def _is_actionable_llm(text: str) -> Optional[bool]:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    endpoint = os.environ.get("OPENAI_RESPONSES_URL", "https://api.openai.com/v1/responses").strip()
+    model = os.environ.get("NOTES_ACTIONABLE_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    timeout = float(os.environ.get("NOTES_ACTIONABLE_TIMEOUT_SEC", "8").strip() or "8")
+
+    instruction = (
+        "You are a strict classifier for notes. "
+        "Return YES only when the note clearly implies an actionable task/todo. "
+        "Return NO for status updates, observations, or questions."
+    )
+    user_text = f"Note: {text}\nDecision (YES or NO only):"
+    body = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": instruction},
+            {"role": "user", "content": user_text},
+        ],
+        "max_output_tokens": 8,
+    }
+    req = urlrequest.Request(
+        endpoint,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlrequest.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urlerror.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+
+    answer = _extract_response_text(payload).strip()
+    if not answer:
+        return None
+    normalized = answer.upper()
+    if "YES" in normalized or ACTIONABLE_YES_RE.search(answer):
+        return True
+    if "NO" in normalized or ACTIONABLE_NO_RE.search(answer):
+        return False
+    return None
+
+
+def is_actionable(text: str) -> bool:
+    lowered = (text or "").strip().lower()
+    if not lowered:
+        return False
+
+    use_llm = os.environ.get("NOTES_ACTIONABLE_USE_LLM", "1").strip().lower() not in {"0", "false", "no"}
+    if use_llm:
+        decision = _is_actionable_llm(text)
+        if decision is not None:
+            return decision
+    return _is_actionable_heuristic(text)
 
 
 def is_long_term_todo(text: str) -> bool:

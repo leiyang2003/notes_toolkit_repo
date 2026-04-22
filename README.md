@@ -43,6 +43,21 @@ Override vault root:
 export NOTES_VAULT_ROOT="/your/path/notes_vault"
 ```
 
+## Actionable 判定（GPT）
+
+- `add note` 后，系统会在扫描 Potential To Do 时优先使用 GPT 判定该 note 是否是可执行待办。
+- 需要配置：
+
+```bash
+export OPENAI_API_KEY="<your-openai-api-key>"
+```
+
+- 可选配置：
+  - `NOTES_ACTIONABLE_MODEL`（默认 `gpt-4o-mini`）
+  - `NOTES_ACTIONABLE_TIMEOUT_SEC`（默认 `8`）
+  - `NOTES_ACTIONABLE_USE_LLM`（默认 `1`，可设 `0` 关闭并退回本地规则）
+  - `OPENAI_RESPONSES_URL`（默认 `https://api.openai.com/v1/responses`）
+
 ## Local run (split)
 
 1) Start backend:
