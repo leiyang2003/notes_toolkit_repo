@@ -1,0 +1,92 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+from notes_app import (
+    add_note,
+    add_todo,
+    approve_potential,
+    complete_todo,
+    process_potential_todos,
+    project_paths,
+    project_state,
+    reject_potential,
+    restore_log_entry,
+)
+
+
+class NotesAppFlowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._old_cwd = os.getcwd()
+        self.addCleanup(lambda: os.chdir(self._old_cwd))
+
+        self.workdir = Path(self._tmp.name)
+        self.vault_root = self.workdir / "vault"
+        self.vault_root.mkdir(parents=True, exist_ok=True)
+        os.environ["NOTES_VAULT_ROOT"] = str(self.vault_root)
+
+        self.project_dir = self.workdir / "sandbox_project"
+        self.project_dir.mkdir(parents=True, exist_ok=True)
+        os.chdir(self.project_dir)
+
+        self.paths = project_paths("demo")
+
+    def test_todo_complete_and_restore_round_trip(self) -> None:
+        add_result = add_todo(self.paths, "Write contract tests", actor="tester")
+        self.assertTrue(add_result.ok)
+
+        state_after_add = project_state(self.paths)
+        self.assertEqual(state_after_add["todo_count"], 1)
+
+        done_result = complete_todo(self.paths, 1, actor="tester")
+        self.assertTrue(done_result.ok)
+        state_after_done = project_state(self.paths)
+        self.assertEqual(state_after_done["todo_count"], 0)
+        self.assertGreaterEqual(len(state_after_done["done"]), 1)
+
+        complete_entry = next((row for row in reversed(state_after_done["logs"]) if row["action"] == "complete_todo"), None)
+        self.assertIsNotNone(complete_entry)
+
+        restore_result = restore_log_entry(self.paths, complete_entry["id"], actor="tester")
+        self.assertTrue(restore_result.ok)
+
+        state_after_restore = project_state(self.paths)
+        self.assertEqual(state_after_restore["todo_count"], 1)
+
+    def test_potential_approve_and_reject_flow(self) -> None:
+        note_one = add_note(self.paths, "Need to call supplier", actor="tester")
+        self.assertTrue(note_one.ok)
+
+        processed = process_potential_todos(self.paths, actor="tester", log_writes=True)
+        self.assertIn(processed.changed, {True, False})
+
+        state_one = project_state(self.paths)
+        self.assertGreaterEqual(state_one["potential_pending_count"], 1)
+
+        approve = approve_potential(self.paths, 1, actor="tester")
+        self.assertTrue(approve.ok)
+
+        state_two = project_state(self.paths)
+        self.assertGreaterEqual(state_two["todo_count"], 1)
+
+        note_two = add_note(self.paths, "Need to send follow-up email", actor="tester")
+        self.assertTrue(note_two.ok)
+        process_potential_todos(self.paths, actor="tester", log_writes=True)
+
+        state_three = project_state(self.paths)
+        pending_items = [item for item in state_three["potentials"] if item["status"] == "pending"]
+        self.assertGreaterEqual(len(pending_items), 1)
+
+        reject = reject_potential(self.paths, 1, actor="tester")
+        self.assertTrue(reject.ok)
+
+        state_four = project_state(self.paths)
+        statuses = {item["status"] for item in state_four["potentials"]}
+        self.assertIn("rejected", statuses)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1563,6 +1563,23 @@ def main() -> int:
             self.send_header("Location", location)
             self.end_headers()
 
+        def _require_auth(self) -> AuthUser | None:
+            try:
+                return self._auth()
+            except AuthError as exc:
+                self._write_json({"ok": False, "message": str(exc)}, status=401)
+                return None
+
+        def _read_json_body(self) -> dict | None:
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8")) if raw else {}
+            except json.JSONDecodeError:
+                self._write_json({"ok": False, "message": "Invalid JSON payload."}, status=400)
+                return None
+            return payload
+
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
             for key, value in self._cors_headers():
@@ -1667,10 +1684,8 @@ def main() -> int:
                 return
 
             if path == "/api/projects":
-                try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._write_json({"ok": False, "message": str(exc)}, status=401)
+                user = self._require_auth()
+                if user is None:
                     return
                 self._write_json(
                     {
@@ -1685,10 +1700,8 @@ def main() -> int:
                 if not project_name:
                     self._write_json({"ok": False, "message": "Project name is required."}, status=400)
                     return
-                try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._write_json({"ok": False, "message": str(exc)}, status=401)
+                user = self._require_auth()
+                if user is None:
                     return
                 try:
                     state = self._user_project_state(user.user_id, project_name)
@@ -1717,17 +1730,11 @@ def main() -> int:
                 return
 
             if path == "/api/init":
-                try:
-                    user = self._auth()
-                except AuthError as exc:
-                    self._write_json({"ok": False, "message": str(exc)}, status=401)
+                user = self._require_auth()
+                if user is None:
                     return
-                length = int(self.headers.get("Content-Length", "0") or "0")
-                raw = self.rfile.read(length) if length > 0 else b"{}"
-                try:
-                    payload = json.loads(raw.decode("utf-8")) if raw else {}
-                except json.JSONDecodeError:
-                    self._write_json({"ok": False, "message": "Invalid JSON payload."}, status=400)
+                payload = self._read_json_body()
+                if payload is None:
                     return
                 project_name = str(payload.get("project_name", "home")).strip() or "home"
                 existing = self._user_projects_summary(user.user_id)
@@ -1753,18 +1760,12 @@ def main() -> int:
             if not project_name:
                 self._write_json({"ok": False, "message": "Project name is required."}, status=400)
                 return
-            try:
-                user = self._auth()
-            except AuthError as exc:
-                self._write_json({"ok": False, "message": str(exc)}, status=401)
+            user = self._require_auth()
+            if user is None:
                 return
 
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            raw = self.rfile.read(length) if length > 0 else b"{}"
-            try:
-                payload = json.loads(raw.decode("utf-8")) if raw else {}
-            except json.JSONDecodeError:
-                self._write_json({"ok": False, "message": "Invalid JSON payload."}, status=400)
+            payload = self._read_json_body()
+            if payload is None:
                 return
 
             action = str(payload.get("action", "")).strip()

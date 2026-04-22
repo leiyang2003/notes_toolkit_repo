@@ -42,6 +42,21 @@ def _project(args: argparse.Namespace) -> str | None:
     return value or None
 
 
+def _emit(payload: object, *, json_mode: bool) -> None:
+    if json_mode:
+        _print_json(payload)
+        return
+    print(payload)
+
+
+def _emit_action_result(result: object, *, json_mode: bool) -> int:
+    if json_mode:
+        _print_json(result.__dict__)
+    else:
+        print(result.message)
+    return 0 if result.ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Notes Toolkit v2 command interface")
     parser.add_argument("--project", help="Project name. Default: current folder name.")
@@ -190,20 +205,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "note" and args.note_cmd == "add":
         result = add_note(paths, args.text, actor=actor)
-        if args.json:
-            _print_json(result.__dict__)
-        else:
-            print(result.message)
-        return 0 if result.ok else 1
+        return _emit_action_result(result, json_mode=args.json)
 
     if args.cmd == "todo":
         if args.todo_cmd == "add":
             result = add_todo(paths, args.text, actor=actor)
-            if args.json:
-                _print_json(result.__dict__)
-            else:
-                print(result.message)
-            return 0 if result.ok else 1
+            return _emit_action_result(result, json_mode=args.json)
         if args.todo_cmd == "list":
             todos = project_state(paths)["todos"]
             if args.json:
@@ -216,11 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.todo_cmd == "complete":
             result = complete_todo(paths, args.id, actor=actor)
-            if args.json:
-                _print_json(result.__dict__)
-            else:
-                print(result.message)
-            return 0 if result.ok else 1
+            return _emit_action_result(result, json_mode=args.json)
 
     if args.cmd == "potential":
         potentials = project_state(paths)["potentials"]
@@ -242,18 +245,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.potential_cmd == "approve":
             result = approve_potential(paths, args.id, actor=actor)
-            if args.json:
-                _print_json(result.__dict__)
-            else:
-                print(result.message)
-            return 0 if result.ok else 1
+            return _emit_action_result(result, json_mode=args.json)
         if args.potential_cmd == "reject":
             result = reject_potential(paths, args.id, actor=actor)
-            if args.json:
-                _print_json(result.__dict__)
-            else:
-                print(result.message)
-            return 0 if result.ok else 1
+            return _emit_action_result(result, json_mode=args.json)
 
     if args.cmd == "log":
         if args.log_cmd == "show":
@@ -272,11 +267,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.log_cmd == "restore":
             result = restore_log_entry(paths, args.id, actor=actor)
-            if args.json:
-                _print_json(result.__dict__)
-            else:
-                print(result.message)
-            return 0 if result.ok else 1
+            return _emit_action_result(result, json_mode=args.json)
 
     if args.cmd == "process":
         result = process_potential_todos(paths, date_override=(args.date or None), actor=actor, log_writes=True)
@@ -289,7 +280,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             _print_json(payload)
         else:
-            print(f"process complete: changed={result.changed}, promoted={result.promoted_count}, added={result.added_count}")
+            _emit(
+                f"process complete: changed={result.changed}, promoted={result.promoted_count}, added={result.added_count}",
+                json_mode=False,
+            )
         return 0
 
     parser.print_help()

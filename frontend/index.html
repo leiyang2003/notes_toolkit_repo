@@ -238,6 +238,7 @@
   <script>
     window.__NOTES_CONFIG__ = __NOTES_CONFIG_JSON__;
   </script>
+  <script src="/storage_utils.js"></script>
 
   <script>
     const APP_CONFIG = (window.__NOTES_CONFIG__ && typeof window.__NOTES_CONFIG__ === "object")
@@ -261,22 +262,15 @@
     const longTermCount = document.getElementById("long-term-count");
 
     function readStoredProject() {
-      try {
-        return localStorage.getItem("notes_dashboard_last_project") || "";
-      } catch (_err) {
-        return "";
+      if (window.NotesDashboardStorage && typeof window.NotesDashboardStorage.readStoredProject === "function") {
+        return window.NotesDashboardStorage.readStoredProject();
       }
+      return "";
     }
 
     function writeStoredProject(projectName) {
-      try {
-        if (projectName) {
-          localStorage.setItem("notes_dashboard_last_project", projectName);
-        } else {
-          localStorage.removeItem("notes_dashboard_last_project");
-        }
-      } catch (_err) {
-        // Storage access can fail in strict browser modes; ignore.
+      if (window.NotesDashboardStorage && typeof window.NotesDashboardStorage.writeStoredProject === "function") {
+        window.NotesDashboardStorage.writeStoredProject(projectName);
       }
     }
 
