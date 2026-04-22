@@ -308,6 +308,7 @@
     let editInProgress = false;
     const expandedTodoKeys = new Set();
     const expandedNoteKeys = new Set();
+    const expandedPotentialKeys = new Set();
     const AUTO_REFRESH_MS = 2000;
     let signedIn = false;
     let signedInEmail = "";
@@ -553,6 +554,10 @@
 
     function noteKey(note) {
       return `${currentProject}::note::${note.line_no || 0}::${note.text || ""}`;
+    }
+
+    function potentialKey(potential, pendingId) {
+      return `${currentProject}::potential::${pendingId}::${potential.timestamp || ""}::${potential.text || ""}`;
     }
 
     function summarizeText(text, maxLen = 80) {
@@ -835,6 +840,7 @@
       writeStoredProject("");
       expandedTodoKeys.clear();
       expandedNoteKeys.clear();
+      expandedPotentialKeys.clear();
       currentProjectLabel.textContent = "Home View";
       setToolbarState(true);
       applyNotesVisibility();
@@ -982,6 +988,8 @@
       } else {
         pending.forEach((p, idx) => {
           const pendingId = idx + 1;
+          const summary = summarizeText(p.text, 90);
+          const key = potentialKey(p, pendingId);
           const row = document.createElement("div");
           row.className = "row potential-row";
           setTooltip(row, p.text);
@@ -990,13 +998,34 @@
               <button type="button" class="icon-btn accept" aria-label="Approve potential #${pendingId}">&#10003;</button>
               <button type="button" class="icon-btn reject" aria-label="Reject potential #${pendingId}">&#10005;</button>
             </div>
-            <div class="row-main">
-              <div class="row-text"><span class="id">#${pendingId}</span> <span class="status-pending">[pending]</span> ${esc(p.text)}</div>
+            <div class="todo-main">
+              <div class="todo-head">
+                <span class="id">#${pendingId}</span>
+                <span class="status-pending">[pending]</span>
+                <span class="todo-brief">${boldImportantNouns(summary.brief || "(empty)")}</span>
+                <button type="button" class="todo-seeall">See all</button>
+              </div>
+              <div class="todo-full hidden-inline">${boldImportantNouns(summary.full || "(empty)")}</div>
               <div class="muted">${esc(p.timestamp)}</div>
             </div>
           `;
           const approveBtn = row.querySelector(".icon-btn.accept");
           const rejectBtn = row.querySelector(".icon-btn.reject");
+          const seeAllBtn = row.querySelector(".todo-seeall");
+          const fullNode = row.querySelector(".todo-full");
+          if (expandedPotentialKeys.has(key)) {
+            fullNode.classList.remove("hidden-inline");
+            seeAllBtn.textContent = "See less";
+          }
+          seeAllBtn.addEventListener("click", () => {
+            const hidden = fullNode.classList.toggle("hidden-inline");
+            seeAllBtn.textContent = hidden ? "See all" : "See less";
+            if (hidden) {
+              expandedPotentialKeys.delete(key);
+            } else {
+              expandedPotentialKeys.add(key);
+            }
+          });
           approveBtn.addEventListener("click", () => {
             approveBtn.disabled = true;
             rejectBtn.disabled = true;
