@@ -550,7 +550,7 @@ def _is_actionable_llm(text: str) -> Optional[bool]:
             {"role": "system", "content": instruction},
             {"role": "user", "content": user_text},
         ],
-        "max_output_tokens": 8,
+        "max_output_tokens": 16,
     }
     req = urlrequest.Request(
         endpoint,
