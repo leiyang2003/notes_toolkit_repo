@@ -8,6 +8,7 @@ from notes_app import (
     add_todo,
     approve_potential,
     complete_todo,
+    dismiss_note,
     edit_note,
     edit_todo,
     mark_todo_long_term,
@@ -132,6 +133,23 @@ class NotesAppFlowTests(unittest.TestCase):
         self.assertTrue(todo_edit.ok)
         state_after_todo_edit = project_state(self.paths)
         self.assertTrue(any("[LT]" in item["text"] and "Draft roadmap v2" in item["text"] for item in state_after_todo_edit["todos"]))
+
+    def test_dismiss_note_removes_related_pending_potential(self) -> None:
+        note = add_note(self.paths, "Need to buy milk for tomorrow", actor="tester")
+        self.assertTrue(note.ok)
+
+        state_before = project_state(self.paths)
+        added_note = next((item for item in state_before["notes"] if "Need to buy milk for tomorrow" in item["text"]), None)
+        self.assertIsNotNone(added_note)
+        pending_before = [item for item in state_before["potentials"] if item["status"] == "pending"]
+        self.assertGreaterEqual(len(pending_before), 1)
+
+        dismissed = dismiss_note(self.paths, int(added_note["id"]), actor="tester")
+        self.assertTrue(dismissed.ok)
+
+        state_after = project_state(self.paths)
+        pending_after = [item for item in state_after["potentials"] if item["status"] == "pending"]
+        self.assertEqual(len(pending_after), 0)
 
 
 if __name__ == "__main__":

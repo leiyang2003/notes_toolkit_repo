@@ -124,6 +124,7 @@
     .icon-btn.longterm { color: #0b4db5; font-weight: 700; }
     .icon-btn.shortterm { color: #157347; font-weight: 700; }
     .icon-btn.edit { color: #6b4f1d; font-weight: 700; }
+    .icon-btn.ai { color: #0f766e; font-weight: 700; width: 38px; font-size: 11px; }
     .inline-edit-input {
       width: 100%;
       border: 1px solid var(--line);
@@ -626,6 +627,7 @@
             <span class="todo-brief">${boldImportantNouns(prepared.brief || "(empty)")}</span>
             <button type="button" class="todo-seeall">See all</button>
             <button type="button" class="icon-btn edit note-edit" aria-label="Edit note #${n.id}" title="Edit note">E</button>
+            <button type="button" class="icon-btn ai note-ai-edit" aria-label="AI edit note #${n.id}" title="AI edit note">AI</button>
           </div>
           <div class="todo-full hidden-inline">${boldImportantNouns(prepared.full || "(empty)")}</div>
           <div class="muted notes-meta">section: ${esc(n.section || "-")} | line: ${n.line_no}</div>
@@ -634,6 +636,7 @@
         const seeAllBtn = right.querySelector(".todo-seeall");
         const fullNode = right.querySelector(".todo-full");
         const noteEditBtn = right.querySelector(".note-edit");
+        const noteAiBtn = right.querySelector(".note-ai-edit");
         const key = noteKey(n);
         if (expandedNoteKeys.has(key)) {
           fullNode.classList.remove("hidden-inline");
@@ -654,6 +657,9 @@
             const checkbox = left.querySelector("input");
             if (checkbox) {
               checkbox.disabled = true;
+            }
+            if (noteAiBtn) {
+              noteAiBtn.disabled = true;
             }
             right.innerHTML = `
               <div class="todo-head">
@@ -698,6 +704,11 @@
             });
           });
         }
+        if (noteAiBtn) {
+          noteAiBtn.addEventListener("click", () => {
+            requestAiEdit("note", n.id, stripNoteMeta(n.text));
+          });
+        }
         row.appendChild(left);
         row.appendChild(right);
         notesList.appendChild(row);
@@ -739,6 +750,7 @@
             <span class="todo-brief">${boldImportantNouns(summary.brief || "(empty)")}</span>
             <button type="button" class="todo-seeall">See all</button>
             <button type="button" class="icon-btn edit todo-edit" aria-label="Edit todo #${t.id}" title="Edit todo">E</button>
+            <button type="button" class="icon-btn ai todo-ai-edit" aria-label="AI edit todo #${t.id}" title="AI edit todo">AI</button>
           </div>
           <div class="todo-full hidden-inline">${boldImportantNouns(summary.full || "(empty)")}</div>
           ${(allowLongTermButton || allowShortTermButton) ? `<div class="todo-footer${footerHiddenByDefault ? " hidden-inline" : ""}">${allowLongTermButton ? `<button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${t.id} as long-term" title="Mark as long-term">L</button>` : ""}${allowShortTermButton ? `<button type="button" class="icon-btn shortterm todo-shortterm" aria-label="Move long-term todo #${t.id} back to open todos" title="Move back to open todos">O</button>` : ""}</div>` : ""}
@@ -749,6 +761,7 @@
         const longTermBtn = right.querySelector(".todo-longterm");
         const shortTermBtn = right.querySelector(".todo-shortterm");
         const editBtn = right.querySelector(".todo-edit");
+        const aiEditBtn = right.querySelector(".todo-ai-edit");
         const key = todoKey(t);
         if (expandedTodoKeys.has(key)) {
           fullNode.classList.remove("hidden-inline");
@@ -794,6 +807,9 @@
             if (shortTermBtn) {
               shortTermBtn.disabled = true;
             }
+            if (aiEditBtn) {
+              aiEditBtn.disabled = true;
+            }
             right.innerHTML = `
               <div class="todo-head">
                 <span class="id">#${t.id}</span>
@@ -837,6 +853,11 @@
             });
           });
         }
+        if (aiEditBtn) {
+          aiEditBtn.addEventListener("click", () => {
+            requestAiEdit("todo", t.id, stripTodoMeta(t.text).replace(/^\[LT\]\s*/i, ""));
+          });
+        }
 
         row.appendChild(left);
         row.appendChild(right);
@@ -850,6 +871,81 @@
       div.className = "row muted";
       div.textContent = text;
       node.appendChild(div);
+    }
+
+    async function requestAiEdit(kind, id, originalText) {
+      const cleanOriginal = String(originalText || "").trim();
+      if (!cleanOriginal) {
+        alert(`No ${kind} content available for AI edit.`);
+        return;
+      }
+
+      const instructionRaw = window.prompt(`Describe how you want to revise this ${kind}:`);
+      if (instructionRaw === null) {
+        return;
+      }
+      const instruction = instructionRaw.trim();
+      if (!instruction) {
+        alert("Please provide an edit instruction for AI.");
+        return;
+      }
+
+      const suggestAction = kind === "note" ? "ai_suggest_edit_note" : "ai_suggest_edit_todo";
+      const applyAction = kind === "note" ? "edit_note" : "edit_todo";
+      const projectName = currentProject;
+      if (!projectName) {
+        alert("Please open a project first.");
+        return;
+      }
+
+      pendingActionCount += 1;
+      actionQueue = actionQueue
+        .then(async () => {
+          actionInFlight = true;
+          try {
+            const data = await apiPost(`/api/project/${encodeURIComponent(projectName)}/actions`, {
+              action: suggestAction,
+              id,
+              instruction,
+            });
+            if (projectName !== currentProject) return;
+
+            const editedText = String(data.edited_text || data.suggested_text || "").trim();
+            if (!editedText) {
+              alert("AI did not return editable content.");
+              return;
+            }
+
+            const preview = [
+              `AI edited content for ${kind} #${id} (will be saved if you confirm):`,
+              "",
+              "Original:",
+              cleanOriginal,
+              "",
+              "Edited:",
+              editedText,
+              "",
+              "Confirm save?",
+            ].join("\n");
+            const shouldApply = window.confirm(preview);
+            if (!shouldApply) {
+              meta.textContent = "AI edit canceled. No changes saved.";
+              return;
+            }
+            await performAction(projectName, applyAction, { id, text: editedText });
+          } catch (err) {
+            alert(`AI edit failed: ${err.message || err}`);
+          } finally {
+            actionInFlight = false;
+          }
+        })
+        .catch((err) => {
+          console.error("AI edit queue error:", err);
+        })
+        .finally(() => {
+          pendingActionCount = Math.max(0, pendingActionCount - 1);
+        });
+      return actionQueue;
     }
 
     function clearSignedOutView(statusText) {

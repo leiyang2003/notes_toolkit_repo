@@ -592,6 +592,66 @@ def is_actionable(text: str) -> bool:
     return _is_actionable_heuristic(text)
 
 
+def suggest_text_edit_with_ai(original_text: str, instruction: str, *, kind: str = "text") -> tuple[bool, str]:
+    source = (original_text or "").strip()
+    if not source:
+        return False, "Original text is empty."
+
+    user_instruction = (instruction or "").strip()
+    if not user_instruction:
+        return False, "Edit instruction is empty."
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return False, "OPENAI_API_KEY is not configured."
+
+    endpoint = os.environ.get("OPENAI_RESPONSES_URL", "https://api.openai.com/v1/responses").strip()
+    model = os.environ.get("NOTES_AI_EDIT_MODEL", "").strip() or os.environ.get("NOTES_ACTIONABLE_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+    timeout = float(os.environ.get("NOTES_AI_EDIT_TIMEOUT_SEC", "15").strip() or "15")
+
+    system_prompt = (
+        "You rewrite existing note text. "
+        "Apply the user instruction to the original text. "
+        "Keep the original language unless explicitly requested. "
+        "Do not introduce new facts not implied by the source. "
+        "Return only the revised text with no explanation."
+    )
+    user_text = (
+        f"Entry type: {kind}\n"
+        f"Original text:\n{source}\n\n"
+        f"Edit instruction:\n{user_instruction}\n\n"
+        "Revised text:"
+    )
+    body = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+        "max_output_tokens": 300,
+    }
+    req = urlrequest.Request(
+        endpoint,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlrequest.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urlerror.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+        return False, f"AI edit request failed: {exc}"
+
+    suggestion = _extract_response_text(payload).strip()
+    if not suggestion:
+        return False, "AI returned an empty suggestion."
+    return True, suggestion
+
+
 def is_long_term_todo(text: str) -> bool:
     raw = TIMESTAMP_PREFIX_RE.sub("", (text or "").strip())
     return bool(LONG_TERM_HINT_RE.search(raw))
@@ -760,6 +820,13 @@ def process_potential_todos(
         text = note_match.group(2).strip()
         if is_actionable(text):
             candidates.append(text)
+
+    candidate_norms = {normalize_text(text) for text in candidates}
+    current_potential = [
+        item
+        for item in current_potential
+        if item["status"] != "pending" or normalize_text(item["text"]) in candidate_norms
+    ]
 
     existing_norms = {normalize_text(item["text"]) for item in current_potential}
     added_count = 0
@@ -953,6 +1020,7 @@ def dismiss_note(paths: ProjectPaths, note_id: int, *, actor: str = "user") -> A
         after_summary=summarize_task(new_line),
         notes_anchor=anchor,
     )
+    process_potential_todos(paths, actor="system", log_writes=True)
     return ActionResult(ok=True, message=f"Note #{note_id} dismissed.", anchor=anchor)
 
 

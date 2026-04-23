@@ -40,11 +40,14 @@ from notes_app import (
     list_projects,
     mark_todo_short_term,
     mark_todo_long_term,
+    parse_note_entries,
     process_potential_todos,
     project_paths,
     project_state,
     reject_potential,
+    suggest_text_edit_with_ai,
     snapshot_notes,
+    list_open_todos,
 )
 
 
@@ -899,6 +902,50 @@ def main() -> int:
                     result = edit_note(paths, int(payload.get("id")), str(payload.get("text", "")), actor=actor)
                 elif action == "edit_todo":
                     result = edit_todo(paths, int(payload.get("id")), str(payload.get("text", "")), actor=actor)
+                elif action == "ai_suggest_edit_note":
+                    note_id = int(payload.get("id"))
+                    instruction = str(payload.get("instruction", ""))
+                    notes = parse_note_entries(paths.notes_path)
+                    target = next((item for item in notes if item["id"] == note_id), None)
+                    if target is None:
+                        self._write_json({"ok": False, "message": f"Note #{note_id} not found."}, status=400)
+                        return
+                    ok, suggestion = suggest_text_edit_with_ai(target["text"], instruction, kind="note")
+                    if not ok:
+                        self._write_json({"ok": False, "message": suggestion}, status=400)
+                        return
+                    self._write_json(
+                        {
+                            "ok": True,
+                            "kind": "note",
+                            "id": note_id,
+                            "original_text": target["text"],
+                            "edited_text": suggestion,
+                        }
+                    )
+                    return
+                elif action == "ai_suggest_edit_todo":
+                    todo_id = int(payload.get("id"))
+                    instruction = str(payload.get("instruction", ""))
+                    todos = list_open_todos(paths)
+                    target = next((item for item in todos if item["id"] == todo_id), None)
+                    if target is None:
+                        self._write_json({"ok": False, "message": f"Todo #{todo_id} not found."}, status=400)
+                        return
+                    ok, suggestion = suggest_text_edit_with_ai(target["text"], instruction, kind="todo")
+                    if not ok:
+                        self._write_json({"ok": False, "message": suggestion}, status=400)
+                        return
+                    self._write_json(
+                        {
+                            "ok": True,
+                            "kind": "todo",
+                            "id": todo_id,
+                            "original_text": target["text"],
+                            "edited_text": suggestion,
+                        }
+                    )
+                    return
                 else:
                     self._write_json({"ok": False, "message": f"Unsupported action: {action}"}, status=400)
                     return
