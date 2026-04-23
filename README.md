@@ -103,7 +103,7 @@ Required env vars:
 - `SESSION_SECRET=<random-long-string>`
 - `FRONTEND_ORIGIN=https://<frontend-domain>`
 - `FRONTEND_APP_URL=https://<frontend-domain>`
-- `COOKIE_SAMESITE=Lax`
+- `COOKIE_SAMESITE=None`（当前后端是不同域名时建议使用；同站点/同域可用 `Lax`）
 - `COOKIE_SECURE=true`
 
 Persistent disk:

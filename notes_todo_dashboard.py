@@ -560,6 +560,23 @@ def main() -> int:
                 ]
             return []
 
+        def _backend_origin(self) -> str:
+            host = str(self.headers.get("Host", "")).strip()
+            scheme = "https" if self._secure_cookie() else "http"
+            return f"{scheme}://{host}".rstrip("/")
+
+        def _session_cookie_same_site(self) -> str:
+            configured = (os.environ.get("COOKIE_SAMESITE", "") or "").strip()
+            if configured:
+                return configured
+
+            # Cross-origin frontend + cookie auth works reliably with SameSite=None on HTTPS.
+            if frontend_origins:
+                backend_origin = self._backend_origin()
+                if any(origin != backend_origin for origin in frontend_origins) and self._secure_cookie():
+                    return "None"
+            return "Lax"
+
         def _safe_next_url(self, raw: str) -> str:
             value = (raw or "").strip()
             if value.startswith("/") and not value.startswith("//"):
@@ -732,7 +749,12 @@ def main() -> int:
                 headers = [
                     (
                         "Set-Cookie",
-                        self._cookie_header(self.SESSION_COOKIE, session_token, max_age=session_manager.max_age_seconds),
+                        self._cookie_header(
+                            self.SESSION_COOKIE,
+                            session_token,
+                            max_age=session_manager.max_age_seconds,
+                            same_site=self._session_cookie_same_site(),
+                        ),
                     ),
                 ]
                 headers.extend(self._clear_cookie_headers(self.OAUTH_STATE_COOKIE))
