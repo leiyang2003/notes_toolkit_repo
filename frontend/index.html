@@ -305,7 +305,13 @@
     let lastProject = initialProject || storedProject || "";
     let notesVisible = false;
     let refreshInFlight = false;
+    let actionInFlight = false;
+    let actionQueue = Promise.resolve();
+    let pendingActionCount = 0;
     let editInProgress = false;
+    let stateRequestSeq = 0;
+    let lastAppliedStateSeq = 0;
+    let lastAppliedStateVersionNs = 0;
     const expandedTodoKeys = new Set();
     const expandedNoteKeys = new Set();
     const expandedPotentialKeys = new Set();
@@ -837,6 +843,12 @@
       currentProject = "";
       lastProject = "";
       notesVisible = false;
+      actionInFlight = false;
+      actionQueue = Promise.resolve();
+      pendingActionCount = 0;
+      stateRequestSeq = 0;
+      lastAppliedStateSeq = 0;
+      lastAppliedStateVersionNs = 0;
       writeStoredProject("");
       expandedTodoKeys.clear();
       expandedNoteKeys.clear();
@@ -903,12 +915,34 @@
       }
     }
 
+    function parseStateVersionNs(state) {
+      const raw = state && state.state_version_ns;
+      const value = typeof raw === "string" ? Number(raw) : Number(raw || 0);
+      if (!Number.isFinite(value)) return 0;
+      return Math.max(0, Math.trunc(value));
+    }
+
+    function shouldApplyProjectState(state, requestSeq) {
+      const versionNs = parseStateVersionNs(state);
+      if (versionNs > 0 && versionNs < lastAppliedStateVersionNs) {
+        return false;
+      }
+      if (requestSeq < lastAppliedStateSeq) {
+        return false;
+      }
+      lastAppliedStateSeq = requestSeq;
+      if (versionNs > 0) {
+        lastAppliedStateVersionNs = Math.max(lastAppliedStateVersionNs, versionNs);
+      }
+      return true;
+    }
+
     async function refreshActiveView() {
       if (!signedIn) {
         clearSignedOutView("Please sign in with Google to load dashboard data.");
         return;
       }
-      if (editInProgress) return;
+      if (editInProgress || actionInFlight || pendingActionCount > 0) return;
       if (refreshInFlight || document.hidden) return;
       refreshInFlight = true;
       try {
@@ -926,6 +960,7 @@
 
     async function loadHome() {
       currentProject = "";
+      lastAppliedStateVersionNs = 0;
       notesVisible = false;
       currentProjectLabel.textContent = "Home View";
       setToolbarState(true);
@@ -933,7 +968,11 @@
       homeView.classList.remove("hidden");
       projectView.classList.add("hidden");
 
+      const requestSeq = ++stateRequestSeq;
       const data = await apiGet("/api/projects");
+      if (currentProject) return;
+      if (requestSeq < lastAppliedStateSeq) return;
+      lastAppliedStateSeq = requestSeq;
       meta.textContent = `Projects: ${data.projects.length} | Updated: ${data.refreshed_at}`;
 
       projectList.innerHTML = "";
@@ -958,17 +997,8 @@
       });
     }
 
-    async function loadProject(projectName) {
-      currentProject = projectName;
-      lastProject = projectName;
-      writeStoredProject(projectName);
-      currentProjectLabel.textContent = `Project: ${projectName}`;
-      setToolbarState(false);
-      applyNotesVisibility();
-      homeView.classList.add("hidden");
-      projectView.classList.remove("hidden");
-
-      const data = await apiGet(`/api/project/${encodeURIComponent(projectName)}/state`);
+    function applyProjectState(data, projectName) {
+      if (projectName !== currentProject) return;
       meta.textContent = `Updated: ${data.updated_at} | notes: ${data.notes_path}`;
       const longTermTodos = Array.isArray(data.long_term_todos) ? data.long_term_todos : [];
       const longTermTodoIds = new Set(longTermTodos.map((item) => item.id));
@@ -1039,17 +1069,66 @@
           potentialList.appendChild(row);
         });
       }
-
     }
 
-    async function runAction(action, payload) {
-      if (!currentProject) return;
+    async function loadProject(projectName) {
+      const switchingProject = currentProject && currentProject !== projectName;
+      if (switchingProject) {
+        lastAppliedStateSeq = 0;
+        lastAppliedStateVersionNs = 0;
+      }
+      currentProject = projectName;
+      lastProject = projectName;
+      writeStoredProject(projectName);
+      currentProjectLabel.textContent = `Project: ${projectName}`;
+      setToolbarState(false);
+      applyNotesVisibility();
+      homeView.classList.add("hidden");
+      projectView.classList.remove("hidden");
+
+      const requestSeq = ++stateRequestSeq;
+      const data = await apiGet(`/api/project/${encodeURIComponent(projectName)}/state`);
+      if (projectName !== currentProject) return;
+      if (!shouldApplyProjectState(data, requestSeq)) return;
+      applyProjectState(data, projectName);
+    }
+
+    async function performAction(projectName, action, payload) {
+      if (!projectName) return;
+      actionInFlight = true;
       try {
-        await apiPost(`/api/project/${encodeURIComponent(currentProject)}/actions`, { action, ...payload });
-        await loadProject(currentProject);
+        const data = await apiPost(`/api/project/${encodeURIComponent(projectName)}/actions`, { action, ...payload });
+        if (projectName !== currentProject) return;
+        if (data && data.state && typeof data.state === "object") {
+          const requestSeq = ++stateRequestSeq;
+          if (shouldApplyProjectState(data.state, requestSeq)) {
+            applyProjectState(data.state, projectName);
+          }
+          return;
+        }
+        await loadProject(projectName);
       } catch (err) {
         alert(`Action failed: ${err.message || err}`);
+        if (projectName === currentProject) {
+          await loadProject(projectName).catch(() => {});
+        }
+      } finally {
+        actionInFlight = false;
       }
+    }
+
+    function runAction(action, payload) {
+      const projectName = currentProject;
+      pendingActionCount += 1;
+      actionQueue = actionQueue
+        .then(() => performAction(projectName, action, payload))
+        .catch((err) => {
+          console.error("Action queue error:", err);
+        })
+        .finally(() => {
+          pendingActionCount = Math.max(0, pendingActionCount - 1);
+        });
+      return actionQueue;
     }
 
     document.getElementById("btn-global").addEventListener("click", () => loadHome().catch((e) => (meta.textContent = e.message)));

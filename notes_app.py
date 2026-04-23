@@ -1509,12 +1509,20 @@ def reject_potential(paths: ProjectPaths, potential_id: int, *, actor: str = "us
 
 
 def project_state(paths: ProjectPaths) -> dict[str, Any]:
+    def _mtime_ns(path: Path) -> int:
+        return path.stat().st_mtime_ns if path.exists() else 0
+
     notes = parse_note_entries(paths.notes_path)
     todos = list_open_todos(paths)
     long_term_todos = [item for item in todos if is_long_term_todo(item["text"])]
     potentials = parse_potential_items(paths.notes_path)
     done = parse_done_items(paths.done_path)
     logs = behavior_log_rows(paths)
+    state_version_ns = max(
+        _mtime_ns(paths.notes_path),
+        _mtime_ns(paths.done_path),
+        _mtime_ns(paths.log_path),
+    )
     return {
         "project": paths.name,
         "notes_path": str(paths.notes_path),
@@ -1528,6 +1536,7 @@ def project_state(paths: ProjectPaths) -> dict[str, Any]:
         "potentials": potentials,
         "done": done,
         "logs": logs[-20:],
+        "state_version_ns": state_version_ns,
         "updated_at": datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S %Z"),
     }
 
