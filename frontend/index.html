@@ -6,54 +6,123 @@
   <title>Notes Toolkit Dashboard</title>
   <style>
     :root {
-      --bg: #fffbe6;
-      --panel: #fffef3;
-      --line: #eadfb0;
-      --ink: #2f2a1f;
-      --muted: #6f674f;
-      --accent: #1f6feb;
-      --ok: #157347;
-      --warn: #b54708;
+      --md-sys-color-primary: #0b57d0;
+      --md-sys-color-on-primary: #ffffff;
+      --md-sys-color-primary-container: #d3e3fd;
+      --md-sys-color-on-primary-container: #041e49;
+      --md-sys-color-surface: #f8f9fa;
+      --md-sys-color-surface-container: #ffffff;
+      --md-sys-color-surface-container-high: #eef2ff;
+      --md-sys-color-outline: #c9cdd5;
+      --md-sys-color-outline-variant: #dfe3eb;
+      --md-sys-color-on-surface: #1f1f1f;
+      --md-sys-color-on-surface-variant: #5f6368;
+      --md-sys-color-success: #137333;
+      --md-sys-color-warning: #b06000;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --radius-sm: 10px;
+      --elevation-1: 0 1px 2px rgba(21, 27, 38, 0.12), 0 1px 3px rgba(21, 27, 38, 0.06);
+      --elevation-2: 0 8px 24px rgba(21, 27, 38, 0.08), 0 2px 6px rgba(21, 27, 38, 0.12);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      background: linear-gradient(170deg, #fffdf0 0%, #fff4bf 100%);
-      color: var(--ink);
-      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--md-sys-color-on-surface);
+      font-family: "Roboto", "Noto Sans SC", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 600px at -12% -20%, #d3e3fd 0%, rgba(211, 227, 253, 0) 60%),
+        radial-gradient(1000px 520px at 110% -10%, #e8f0fe 0%, rgba(232, 240, 254, 0) 58%),
+        linear-gradient(180deg, #f7f9ff 0%, #eef2ff 100%);
     }
-    .wrap { max-width: 1160px; margin: 20px auto; padding: 0 14px; }
+    .wrap { max-width: 1180px; margin: 20px auto; padding: 0 14px; }
     .header {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 14px;
-      box-shadow: 0 6px 20px rgba(42, 57, 80, 0.08);
+      background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      box-shadow: var(--elevation-2);
+      backdrop-filter: blur(6px);
     }
-    .header h1 { margin: 0 0 8px; font-size: 22px; }
-    .meta { margin: 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; word-break: break-word; }
+    .header h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      letter-spacing: 0.01em;
+      font-weight: 600;
+    }
+    .meta { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: 13px; overflow-wrap: anywhere; word-break: break-word; }
     .toolbar { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .toolbar-auth {
+      margin-top: 8px;
+      border-top: 1px dashed var(--md-sys-color-outline);
+      padding-top: 8px;
+    }
     button {
-      border: 1px solid var(--line);
+      border: 1px solid var(--md-sys-color-outline);
       background: #fff;
-      border-radius: 9px;
-      padding: 7px 10px;
+      color: var(--md-sys-color-on-surface);
+      border-radius: 999px;
+      padding: 8px 14px;
       cursor: pointer;
       font-size: 13px;
       max-width: 100%;
+      min-height: 34px;
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease, background-color 140ms ease;
     }
-    button.primary { background: #eaf2ff; border-color: #b8d0ff; color: #0b4db5; }
+    button:hover {
+      border-color: var(--md-sys-color-primary);
+      box-shadow: var(--elevation-1);
+      transform: translateY(-1px);
+    }
+    button:active {
+      transform: translateY(0);
+      box-shadow: none;
+    }
+    button:focus-visible,
+    .todo-check:focus-visible,
+    input[type="text"]:focus-visible,
+    input[type="number"]:focus-visible {
+      outline: 3px solid rgba(11, 87, 208, 0.25);
+      outline-offset: 2px;
+    }
+    button.primary {
+      background: var(--md-sys-color-primary);
+      border-color: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
+      box-shadow: var(--elevation-1);
+    }
+    button.primary:hover {
+      background: #0842a0;
+      border-color: #0842a0;
+    }
     .grid { margin-top: 14px; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
     .top-grid { grid-column: 1 / -1; display: grid; gap: 12px; grid-template-columns: 1fr 1fr; align-items: stretch; }
     .right-stack { display: grid; gap: 12px; grid-template-rows: 1fr 1fr; height: 100%; min-height: 0; }
-    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+    .card {
+      background: linear-gradient(180deg, var(--md-sys-color-surface-container) 0%, var(--md-sys-color-surface) 100%);
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      box-shadow: var(--elevation-1);
+      transition: box-shadow 180ms ease, border-color 180ms ease;
+    }
+    .card:hover {
+      box-shadow: var(--elevation-2);
+      border-color: #cfd8ff;
+    }
     .stack-card { display: flex; flex-direction: column; min-height: 0; }
     .stack-card .list { min-height: 0; overflow: auto; }
-    .title { margin: 0 0 8px; font-size: 15px; font-weight: 700; }
+    .title {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: #173b7b;
+    }
     .list { display: grid; gap: 7px; }
     .row {
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      border-radius: var(--radius-sm);
       padding: 8px;
       font-size: 13px;
       display: flex;
@@ -61,12 +130,23 @@
       gap: 8px;
       align-items: flex-start;
       min-width: 0;
+      background: #ffffff;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+    .row:hover {
+      border-color: #bfccf6;
+      box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
     }
     .row-main { min-width: 0; flex: 1; }
     .row-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .project-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
     .todo-complete { flex: 0 0 auto; display: flex; align-items: center; }
-    .todo-check { width: 18px; height: 18px; cursor: pointer; }
+    .todo-check {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: var(--md-sys-color-primary);
+    }
     .todo-row { align-items: flex-start; }
     .todo-left { flex: 0 0 auto; padding-top: 2px; }
     .todo-main { min-width: 0; flex: 1; overflow: hidden; }
@@ -83,14 +163,16 @@
     .todo-seeall {
       border: none;
       background: transparent;
-      color: #0b4db5;
+      color: var(--md-sys-color-primary);
       font-size: 12px;
       padding: 0;
       cursor: pointer;
       flex: 0 0 auto;
       min-width: 52px;
       text-align: right;
+      min-height: auto;
     }
+    .todo-seeall:hover { box-shadow: none; transform: none; text-decoration: underline; }
     .todo-full {
       margin-top: 6px;
       font-size: 12px;
@@ -103,50 +185,71 @@
     .hidden-inline { display: none; }
     .notes-row .todo-brief { font-weight: 500; }
     .recovered-row {
-      background: linear-gradient(180deg, #fffdf6 0%, #fff6d9 100%);
-      border-color: #d9c27a;
+      background: linear-gradient(180deg, #fffef7 0%, #fff5db 100%);
+      border-color: #e5c675;
     }
     .notes-meta { margin-top: 4px; }
     .potential-actions { display: flex; gap: 6px; flex: 0 0 auto; }
     .icon-btn {
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      border: 1px solid var(--md-sys-color-outline);
+      border-radius: 999px;
       background: #fff;
-      width: 28px;
-      height: 28px;
+      width: 30px;
+      height: 30px;
       padding: 0;
       font-size: 14px;
       line-height: 1;
       cursor: pointer;
     }
-    .icon-btn.accept { color: var(--ok); }
+    .icon-btn.accept { color: var(--md-sys-color-success); }
     .icon-btn.reject { color: #b42318; }
-    .icon-btn.longterm { color: #0b4db5; font-weight: 700; }
-    .icon-btn.shortterm { color: #157347; font-weight: 700; }
+    .icon-btn.longterm { color: var(--md-sys-color-primary); font-weight: 700; }
+    .icon-btn.shortterm { color: var(--md-sys-color-success); font-weight: 700; }
     .icon-btn.edit { color: #6b4f1d; font-weight: 700; }
     .icon-btn.ai { color: #0f766e; font-weight: 700; width: 38px; font-size: 11px; }
     .inline-edit-input {
       width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 7px;
+      border: 1px solid var(--md-sys-color-outline);
+      border-radius: var(--radius-sm);
+      padding: 9px 11px;
       font-size: 13px;
       margin-top: 6px;
+      color: var(--md-sys-color-on-surface);
+      background: #fff;
     }
     .edit-actions { margin-top: 6px; display: flex; justify-content: flex-end; gap: 6px; }
-    .muted { color: var(--muted); font-size: 12px; }
-    .id { color: #0b4db5; font-weight: 700; }
-    .status-pending { color: var(--warn); }
-    .status-promoted, .status-done { color: var(--ok); }
+    .muted { color: var(--md-sys-color-on-surface-variant); font-size: 12px; }
+    .id {
+      color: var(--md-sys-color-primary);
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--md-sys-color-primary-container);
+    }
+    .status-pending { color: var(--md-sys-color-warning); }
+    .status-promoted, .status-done { color: var(--md-sys-color-success); }
     .forms { display: grid; gap: 8px; }
     .inline { display: flex; gap: 8px; flex-wrap: wrap; }
     input[type="text"], input[type="number"] {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 7px;
+      border: 1px solid var(--md-sys-color-outline);
+      border-radius: 999px;
+      padding: 9px 12px;
       min-width: 0;
       font-size: 13px;
       max-width: 100%;
+      background: #fff;
+      color: var(--md-sys-color-on-surface);
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+    input[type="text"]:hover, input[type="number"]:hover {
+      border-color: #9eb4ea;
+    }
+    input[type="text"]:focus, input[type="number"]:focus {
+      border-color: var(--md-sys-color-primary);
+      box-shadow: 0 0 0 3px rgba(11, 87, 208, 0.15);
+      outline: none;
     }
     .inline > input[type="text"],
     .inline > input[type="number"] {
@@ -161,7 +264,7 @@
     }
     @media (max-width: 640px) {
       .wrap { margin: 12px auto; padding: 0 10px; }
-      .header { padding: 12px; border-radius: 12px; }
+      .header { padding: 12px; border-radius: 14px; }
       .header h1 { font-size: 19px; }
       .toolbar { gap: 6px; }
       .toolbar button { flex: 1 1 calc(50% - 6px); min-width: 130px; }
@@ -186,14 +289,23 @@
       .title { font-size: 14px; }
       .row, button, input[type="text"], input[type="number"] { font-size: 12px; }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="header">
       <h1>Notes Toolkit Dashboard</h1>
-      <p id="meta" class="meta">Loading...</p>
-      <div class="toolbar" style="margin-top:8px; border-top:1px dashed var(--line); padding-top:8px;">
+      <p id="meta" class="meta" role="status" aria-live="polite">Loading...</p>
+      <div class="toolbar toolbar-auth">
         <button id="btn-google-login">Google Login (Redirect)</button>
         <button id="btn-google-logout">Logout</button>
         <span id="auth-label" class="muted">Not signed in</span>
@@ -375,126 +487,122 @@
       return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
 
+    const IMPORTANT_ENGLISH_PHRASES = [
+      "knowledge base",
+      "game cards",
+      "game card",
+      "game mode",
+      "first sentence",
+      "source of truth",
+      "vector db",
+      "to-do tracking",
+    ]
+      .slice()
+      .sort((a, b) => b.length - a.length);
+    const IMPORTANT_ENGLISH_WORDS = [
+      "character",
+      "characters",
+      "persona",
+      "personas",
+      "profile",
+      "friend",
+      "hitmap",
+      "intro",
+      "voice",
+      "voices",
+      "latency",
+      "memory",
+      "memories",
+      "vector",
+      "database",
+      "performance",
+      "pipeline",
+      "schema",
+      "specification",
+      "dashboard",
+      "script",
+      "scripts",
+      "deploy",
+      "deployment",
+      "asset",
+      "assets",
+      "layout",
+      "workflow",
+      "config",
+      "telegram",
+      "quality",
+      "cards",
+      "card",
+    ];
+    const IMPORTANT_CHINESE_TERMS = [
+      "角色",
+      "角色卡",
+      "知识库",
+      "游戏卡",
+      "人设",
+      "用户",
+      "主人公",
+      "服饰",
+      "声音",
+      "引子",
+      "关系",
+      "朋友",
+      "场景",
+      "延迟",
+      "性能",
+      "记忆",
+      "向量库",
+      "部署",
+      "脚本",
+      "看板",
+    ];
+    const IMPORTANT_KNOWN_NAMES = ["zoe", "fei", "lebing", "乐冰", "美咲", "小萌", "Zoe", "Fei"];
+    const CAPITALIZED_STOP_WORDS = new Set([
+      "add",
+      "need",
+      "create",
+      "recreate",
+      "design",
+      "optimize",
+      "update",
+      "please",
+      "game",
+      "mode",
+      "for",
+      "with",
+      "and",
+    ]);
+    const IMPORTANT_PHRASE_REGEXES = IMPORTANT_ENGLISH_PHRASES.map((phrase) => new RegExp(`\\b(${escapeRegExp(phrase)})\\b`, "gi"));
+    const IMPORTANT_WORD_REGEXES = IMPORTANT_ENGLISH_WORDS.map((word) => new RegExp(`\\b(${escapeRegExp(word)})\\b`, "gi"));
+    const IMPORTANT_CHINESE_REGEXES = IMPORTANT_CHINESE_TERMS.map((term) => new RegExp(escapeRegExp(term), "g"));
+    const IMPORTANT_NAME_REGEXES = IMPORTANT_KNOWN_NAMES.map((name) => ({
+      regex: /^[A-Za-z]/.test(name) ? new RegExp(`\\b(${escapeRegExp(name)})\\b`, "gi") : new RegExp(escapeRegExp(name), "g"),
+    }));
+
+    function wrapStrong(value) {
+      return `<strong>${value}</strong>`;
+    }
+
+    function replaceOutsideStrong(input, pattern, replacer) {
+      return String(input)
+        .split(/(<strong>.*?<\/strong>)/g)
+        .map((seg) => (seg.startsWith("<strong>") ? seg : seg.replace(pattern, replacer)))
+        .join("");
+    }
+
     function boldImportantNouns(text) {
-      const englishPhrases = [
-        "knowledge base",
-        "game cards",
-        "game card",
-        "game mode",
-        "first sentence",
-        "source of truth",
-        "vector db",
-        "to-do tracking",
-      ];
-      const englishWords = [
-        "character",
-        "characters",
-        "persona",
-        "personas",
-        "profile",
-        "friend",
-        "hitmap",
-        "intro",
-        "voice",
-        "voices",
-        "latency",
-        "memory",
-        "memories",
-        "vector",
-        "database",
-        "performance",
-        "pipeline",
-        "schema",
-        "specification",
-        "dashboard",
-        "script",
-        "scripts",
-        "deploy",
-        "deployment",
-        "asset",
-        "assets",
-        "layout",
-        "workflow",
-        "config",
-        "telegram",
-        "quality",
-        "cards",
-        "card",
-      ];
-      const chineseTerms = [
-        "角色",
-        "角色卡",
-        "知识库",
-        "游戏卡",
-        "人设",
-        "用户",
-        "主人公",
-        "服饰",
-        "声音",
-        "引子",
-        "关系",
-        "朋友",
-        "场景",
-        "延迟",
-        "性能",
-        "记忆",
-        "向量库",
-        "部署",
-        "脚本",
-        "看板",
-      ];
-      const knownNames = ["zoe", "fei", "lebing", "乐冰", "美咲", "小萌", "Zoe", "Fei"];
-      const capitalizedStopWords = new Set([
-        "add",
-        "need",
-        "create",
-        "recreate",
-        "design",
-        "optimize",
-        "update",
-        "please",
-        "game",
-        "mode",
-        "for",
-        "with",
-        "and",
-      ]);
-
       let out = esc(text || "");
-      const wrapStrong = (value) => `<strong>${value}</strong>`;
-      const replaceOutsideStrong = (input, pattern, replacer) => {
-        return String(input)
-          .split(/(<strong>.*?<\/strong>)/g)
-          .map((seg) => (seg.startsWith("<strong>") ? seg : seg.replace(pattern, replacer)))
-          .join("");
-      };
-
-      englishPhrases
-        .slice()
-        .sort((a, b) => b.length - a.length)
-        .forEach((phrase) => {
-          const re = new RegExp(`\\b(${escapeRegExp(phrase)})\\b`, "gi");
-          out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
-        });
-
-      englishWords.forEach((word) => {
-        const re = new RegExp(`\\b(${escapeRegExp(word)})\\b`, "gi");
+      IMPORTANT_PHRASE_REGEXES.forEach((re) => {
         out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
       });
-
-      chineseTerms.forEach((term) => {
-        const re = new RegExp(escapeRegExp(term), "g");
+      IMPORTANT_WORD_REGEXES.forEach((re) => {
         out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
       });
-
-      knownNames.forEach((name) => {
-        if (/^[A-Za-z]/.test(name)) {
-          const re = new RegExp(`\\b(${escapeRegExp(name)})\\b`, "gi");
-          out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
-          return;
-        }
-        const re = new RegExp(escapeRegExp(name), "g");
+      IMPORTANT_CHINESE_REGEXES.forEach((re) => {
         out = replaceOutsideStrong(out, re, (m) => wrapStrong(m));
+      });
+      IMPORTANT_NAME_REGEXES.forEach(({ regex }) => {
+        out = replaceOutsideStrong(out, regex, (m) => wrapStrong(m));
       });
 
       out = replaceOutsideStrong(
@@ -505,7 +613,7 @@
 
       out = replaceOutsideStrong(out, /\b([A-Z][a-z]{2,24})\b/g, (full, token) => {
         const lower = token.toLowerCase();
-        if (capitalizedStopWords.has(lower)) {
+        if (CAPITALIZED_STOP_WORDS.has(lower)) {
           return full;
         }
         return wrapStrong(token);
@@ -601,6 +709,7 @@
         return;
       }
 
+      const fragment = document.createDocumentFragment();
       entries.forEach((n) => {
         const prepared = summarizeText(stripNoteMeta(n.text), 90);
         const row = document.createElement("div");
@@ -713,8 +822,9 @@
         }
         row.appendChild(left);
         row.appendChild(right);
-        notesList.appendChild(row);
+        fragment.appendChild(row);
       });
+      notesList.appendChild(fragment);
     }
 
     function renderTodoRows(targetList, todos, emptyText, options = {}) {
@@ -727,6 +837,7 @@
         return;
       }
 
+      const fragment = document.createDocumentFragment();
       todos.forEach((t) => {
         const summary = summarizeTodo(t.text);
         const row = document.createElement("div");
@@ -867,8 +978,9 @@
 
         row.appendChild(left);
         row.appendChild(right);
-        targetList.appendChild(row);
+        fragment.appendChild(row);
       });
+      targetList.appendChild(fragment);
     }
 
     function emptyNode(node, text) {
@@ -1096,6 +1208,7 @@
         return;
       }
 
+      const fragment = document.createDocumentFragment();
       data.projects.forEach((p) => {
         const row = document.createElement("div");
         row.className = "row project-row";
@@ -1108,8 +1221,9 @@
           <button data-project="${esc(p.project)}">Open</button>
         `;
         row.querySelector("button").addEventListener("click", () => loadProject(p.project));
-        projectList.appendChild(row);
+        fragment.appendChild(row);
       });
+      projectList.appendChild(fragment);
     }
 
     function applyProjectState(data, projectName) {
@@ -1131,6 +1245,7 @@
       if (!pending.length) {
         emptyNode(potentialList, "No pending potential items.");
       } else {
+        const fragment = document.createDocumentFragment();
         pending.forEach((p, idx) => {
           const pendingId = idx + 1;
           const summary = summarizeText(p.text, 90);
@@ -1183,8 +1298,9 @@
             row.classList.add("hidden-inline");
             runAction("reject_potential", { id: pendingId });
           });
-          potentialList.appendChild(row);
+          fragment.appendChild(row);
         });
+        potentialList.appendChild(fragment);
       }
     }
 
@@ -1304,6 +1420,20 @@
       if (!id) return;
       runAction("complete_todo", { id });
     });
+
+    function bindInputEnter(inputId, onSubmit) {
+      const input = document.getElementById(inputId);
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter") return;
+        ev.preventDefault();
+        onSubmit();
+      });
+    }
+
+    bindInputEnter("note-input", () => document.getElementById("add-note").click());
+    bindInputEnter("todo-input", () => document.getElementById("add-todo").click());
+    bindInputEnter("approve-id", () => document.getElementById("approve-potential").click());
+    bindInputEnter("complete-id", () => document.getElementById("complete-todo").click());
 
     async function init() {
       const params = new URLSearchParams(window.location.search);
