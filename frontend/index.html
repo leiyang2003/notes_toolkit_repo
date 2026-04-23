@@ -122,6 +122,7 @@
     .icon-btn.accept { color: var(--ok); }
     .icon-btn.reject { color: #b42318; }
     .icon-btn.longterm { color: #0b4db5; font-weight: 700; }
+    .icon-btn.shortterm { color: #157347; font-weight: 700; }
     .icon-btn.edit { color: #6b4f1d; font-weight: 700; }
     .inline-edit-input {
       width: 100%;
@@ -705,6 +706,8 @@
 
     function renderTodoRows(targetList, todos, emptyText, options = {}) {
       const allowLongTermButton = Boolean(options.allowLongTermButton);
+      const allowShortTermButton = Boolean(options.allowShortTermButton);
+      const footerHiddenByDefault = options.footerHiddenByDefault !== false;
       targetList.innerHTML = "";
       if (!todos.length) {
         emptyNode(targetList, emptyText);
@@ -738,12 +741,13 @@
             <button type="button" class="icon-btn edit todo-edit" aria-label="Edit todo #${t.id}" title="Edit todo">E</button>
           </div>
           <div class="todo-full hidden-inline">${boldImportantNouns(summary.full || "(empty)")}</div>
-          ${allowLongTermButton ? `<div class="todo-footer hidden-inline"><button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${t.id} as long-term" title="Mark as long-term">L</button></div>` : ""}
+          ${(allowLongTermButton || allowShortTermButton) ? `<div class="todo-footer${footerHiddenByDefault ? " hidden-inline" : ""}">${allowLongTermButton ? `<button type="button" class="icon-btn longterm todo-longterm" aria-label="Mark todo #${t.id} as long-term" title="Mark as long-term">L</button>` : ""}${allowShortTermButton ? `<button type="button" class="icon-btn shortterm todo-shortterm" aria-label="Move long-term todo #${t.id} back to open todos" title="Move back to open todos">O</button>` : ""}</div>` : ""}
         `;
         const seeAllBtn = right.querySelector(".todo-seeall");
         const fullNode = right.querySelector(".todo-full");
         const footerNode = right.querySelector(".todo-footer");
         const longTermBtn = right.querySelector(".todo-longterm");
+        const shortTermBtn = right.querySelector(".todo-shortterm");
         const editBtn = right.querySelector(".todo-edit");
         const key = todoKey(t);
         if (expandedTodoKeys.has(key)) {
@@ -771,6 +775,12 @@
             runAction("mark_long_term_todo", { id: t.id });
           });
         }
+        if (shortTermBtn) {
+          shortTermBtn.addEventListener("click", () => {
+            shortTermBtn.disabled = true;
+            runAction("mark_short_term_todo", { id: t.id });
+          });
+        }
         if (editBtn) {
           editBtn.addEventListener("click", () => {
             editInProgress = true;
@@ -780,6 +790,9 @@
             }
             if (longTermBtn) {
               longTermBtn.disabled = true;
+            }
+            if (shortTermBtn) {
+              shortTermBtn.disabled = true;
             }
             right.innerHTML = `
               <div class="todo-head">
@@ -1008,8 +1021,8 @@
       longTermCount.textContent = `(${longTermTodos.length})`;
       renderNotesEntries(Array.isArray(data.notes) ? data.notes : []);
 
-      renderTodoRows(todoList, openTodos, "No open todos.", { allowLongTermButton: true });
-      renderTodoRows(longTermList, longTermTodos, "No long-term todos.");
+      renderTodoRows(todoList, openTodos, "No open todos.", { allowLongTermButton: true, footerHiddenByDefault: true });
+      renderTodoRows(longTermList, longTermTodos, "No long-term todos.", { allowShortTermButton: true, footerHiddenByDefault: false });
 
       potentialList.innerHTML = "";
       const pending = data.potentials.filter((p) => p.status === "pending");
