@@ -615,7 +615,9 @@
         left.innerHTML = `<input type="checkbox" class="todo-check" aria-label="Hide note #${n.id}" />`;
         left.querySelector("input").addEventListener("change", (ev) => {
           if (!ev.target.checked) return;
+          ev.target.checked = true;
           ev.target.disabled = true;
+          row.classList.add("hidden-inline");
           runAction("dismiss_note", { id: n.id });
         });
 
@@ -738,7 +740,9 @@
         left.innerHTML = `<input type="checkbox" class="todo-check" aria-label="Complete todo #${t.id}" />`;
         left.querySelector("input").addEventListener("change", (ev) => {
           if (!ev.target.checked) return;
+          ev.target.checked = true;
           ev.target.disabled = true;
+          row.classList.add("hidden-inline");
           runAction("complete_todo", { id: t.id });
         });
 
@@ -773,7 +777,7 @@
         seeAllBtn.addEventListener("click", () => {
           const hidden = fullNode.classList.toggle("hidden-inline");
           seeAllBtn.textContent = hidden ? "See all" : "See less";
-          if (footerNode) {
+          if (footerNode && footerHiddenByDefault) {
             footerNode.classList.toggle("hidden-inline", hidden);
           }
           if (hidden) {
@@ -785,12 +789,14 @@
         if (longTermBtn) {
           longTermBtn.addEventListener("click", () => {
             longTermBtn.disabled = true;
+            row.classList.add("hidden-inline");
             runAction("mark_long_term_todo", { id: t.id });
           });
         }
         if (shortTermBtn) {
           shortTermBtn.addEventListener("click", () => {
             shortTermBtn.disabled = true;
+            row.classList.add("hidden-inline");
             runAction("mark_short_term_todo", { id: t.id });
           });
         }
@@ -1118,7 +1124,7 @@
       renderNotesEntries(Array.isArray(data.notes) ? data.notes : []);
 
       renderTodoRows(todoList, openTodos, "No open todos.", { allowLongTermButton: true, footerHiddenByDefault: true });
-      renderTodoRows(longTermList, longTermTodos, "No long-term todos.", { allowShortTermButton: true, footerHiddenByDefault: false });
+      renderTodoRows(longTermList, longTermTodos, "No long-term todos.", { allowShortTermButton: true, footerHiddenByDefault: true });
 
       potentialList.innerHTML = "";
       const pending = data.potentials.filter((p) => p.status === "pending");
@@ -1168,11 +1174,13 @@
           approveBtn.addEventListener("click", () => {
             approveBtn.disabled = true;
             rejectBtn.disabled = true;
+            row.classList.add("hidden-inline");
             runAction("approve_potential", { id: pendingId });
           });
           rejectBtn.addEventListener("click", () => {
             approveBtn.disabled = true;
             rejectBtn.disabled = true;
+            row.classList.add("hidden-inline");
             runAction("reject_potential", { id: pendingId });
           });
           potentialList.appendChild(row);
