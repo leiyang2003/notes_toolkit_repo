@@ -81,11 +81,19 @@ function includesText(value, query) {
 }
 
 function editableContent(text) {
-  const raw = String(text || "").trim();
-  return raw
-    .replace(/^\s*\[[^\]]+\]\s*/, "")
-    .replace(/^\s*\[LT\]\s*/i, "")
-    .trim();
+  let raw = String(text || "").trim();
+  const timestampPrefix = /^\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/;
+  const longTermPrefix = /^\s*\[LT\]\s*/i;
+
+  // Strip system-managed metadata prefixes until content starts.
+  while (true) {
+    const next = raw.replace(longTermPrefix, "").replace(timestampPrefix, "").trim();
+    if (next === raw) {
+      break;
+    }
+    raw = next;
+  }
+  return raw;
 }
 
 export default function WorkspaceScreen({
