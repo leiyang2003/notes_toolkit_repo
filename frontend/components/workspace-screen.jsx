@@ -96,6 +96,23 @@ function editableContent(text) {
   return raw;
 }
 
+function completedDisplayContent(text) {
+  let raw = String(text || "").trim();
+  const todoPrefix = /^\s*-\s*\[[ xX]\]\s*/;
+  const timestampPrefix = /^\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/;
+  const longTermPrefix = /^\s*\[LT\]\s*/i;
+
+  raw = raw.replace(todoPrefix, "").trim();
+  while (true) {
+    const next = raw.replace(longTermPrefix, "").replace(timestampPrefix, "").trim();
+    if (next === raw) {
+      break;
+    }
+    raw = next;
+  }
+  return raw;
+}
+
 export default function WorkspaceScreen({
   session,
   projects,
@@ -443,7 +460,7 @@ export default function WorkspaceScreen({
                   <article className="item-row" key={`done-${index}`}>
                     <div>
                       <p className="item-meta">{item.timestamp}</p>
-                      <ItemText text={item.text} />
+                      <ItemText text={completedDisplayContent(item.text)} />
                     </div>
                   </article>
                 ))
