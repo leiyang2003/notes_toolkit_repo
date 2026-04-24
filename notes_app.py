@@ -1461,10 +1461,7 @@ def mark_todo_short_term(paths: ProjectPaths, todo_id: int, *, actor: str = "use
 
 def list_pending_potentials(paths: ProjectPaths) -> list[dict[str, Any]]:
     items = parse_potential_items(paths.notes_path)
-    pending = [item for item in items if item["status"] == "pending"]
-    for idx, item in enumerate(pending, start=1):
-        item["id"] = idx
-    return pending
+    return [item for item in items if item["status"] == "pending"]
 
 
 def approve_potential(paths: ProjectPaths, potential_id: int, *, actor: str = "user") -> ActionResult:
