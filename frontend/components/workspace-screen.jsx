@@ -80,6 +80,14 @@ function includesText(value, query) {
     .includes(query.trim().toLowerCase());
 }
 
+function editableContent(text) {
+  const raw = String(text || "").trim();
+  return raw
+    .replace(/^\s*\[[^\]]+\]\s*/, "")
+    .replace(/^\s*\[LT\]\s*/i, "")
+    .trim();
+}
+
 export default function WorkspaceScreen({
   session,
   projects,
@@ -239,9 +247,9 @@ export default function WorkspaceScreen({
                   <RowActions>
                     <ActionButton
                       onClick={() => {
-                        const nextText = window.prompt("Edit note text", note.text);
-                        if (nextText) {
-                          onEditNote(note.id, nextText);
+                        const nextText = window.prompt("Edit note text", editableContent(note.text));
+                        if (nextText && nextText.trim()) {
+                          onEditNote(note.id, nextText.trim());
                         }
                       }}
                     >
@@ -287,9 +295,9 @@ export default function WorkspaceScreen({
                   <ActionButton onClick={() => onTodoLongTerm(todo.id)}>Mark LT</ActionButton>
                   <ActionButton
                     onClick={() => {
-                      const nextText = window.prompt("Edit todo text", todo.text);
-                      if (nextText) {
-                        onEditTodo(todo.id, nextText);
+                      const nextText = window.prompt("Edit todo text", editableContent(todo.text));
+                      if (nextText && nextText.trim()) {
+                        onEditTodo(todo.id, nextText.trim());
                       }
                     }}
                   >
@@ -317,9 +325,9 @@ export default function WorkspaceScreen({
                   <ActionButton onClick={() => onTodoShortTerm(todo.id)}>Mark ST</ActionButton>
                   <ActionButton
                     onClick={() => {
-                      const nextText = window.prompt("Edit todo text", todo.text);
-                      if (nextText) {
-                        onEditTodo(todo.id, nextText);
+                      const nextText = window.prompt("Edit todo text", editableContent(todo.text));
+                      if (nextText && nextText.trim()) {
+                        onEditTodo(todo.id, nextText.trim());
                       }
                     }}
                   >
