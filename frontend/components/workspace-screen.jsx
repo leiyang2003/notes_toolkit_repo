@@ -37,6 +37,16 @@ function ItemText({ text }) {
   return <p className="item-text">{text}</p>;
 }
 
+function ItemMeta({ id, timestamp = "", extra = null }) {
+  return (
+    <p className="item-meta">
+      <span className="id-chip">#{id}</span>
+      <span>{timestamp || "-"}</span>
+      {extra}
+    </p>
+  );
+}
+
 function EmptyState({ text }) {
   return <p className="empty-state">{text}</p>;
 }
@@ -80,11 +90,13 @@ function includesText(value, query) {
     .includes(query.trim().toLowerCase());
 }
 
-function editableContent(text) {
+function stripMetadataPrefixes(text) {
   let raw = String(text || "").trim();
+  const todoPrefix = /^\s*-\s*\[[ xX]\]\s*/;
   const timestampPrefix = /^\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/;
   const longTermPrefix = /^\s*\[LT\]\s*/i;
 
+  raw = raw.replace(todoPrefix, "").trim();
   // Strip system-managed metadata prefixes until content starts.
   while (true) {
     const next = raw.replace(longTermPrefix, "").replace(timestampPrefix, "").trim();
@@ -96,21 +108,18 @@ function editableContent(text) {
   return raw;
 }
 
-function completedDisplayContent(text) {
-  let raw = String(text || "").trim();
-  const todoPrefix = /^\s*-\s*\[[ xX]\]\s*/;
-  const timestampPrefix = /^\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/;
-  const longTermPrefix = /^\s*\[LT\]\s*/i;
+function extractInlineTimestamp(text) {
+  const raw = String(text || "");
+  const matched = raw.match(/\[(\d{4}-\d{2}-\d{2}[^[]*?)\]/);
+  return matched ? matched[1].trim() : "";
+}
 
-  raw = raw.replace(todoPrefix, "").trim();
-  while (true) {
-    const next = raw.replace(longTermPrefix, "").replace(timestampPrefix, "").trim();
-    if (next === raw) {
-      break;
-    }
-    raw = next;
-  }
-  return raw;
+function editableContent(text) {
+  return stripMetadataPrefixes(text);
+}
+
+function displayBody(text) {
+  return stripMetadataPrefixes(text);
 }
 
 export default function WorkspaceScreen({
@@ -264,10 +273,8 @@ export default function WorkspaceScreen({
               filteredNotes.map((note) => (
                 <article className="item-row" key={`note-${note.id}`}>
                   <div>
-                    <p className="item-meta">
-                      <span className="id-chip">#{note.id}</span> {note.section || "General"}
-                    </p>
-                    <ItemText text={note.text} />
+                    <ItemMeta id={note.id} timestamp={extractInlineTimestamp(note.text)} />
+                    <ItemText text={displayBody(note.text)} />
                   </div>
                   <RowActions>
                     <ActionButton
@@ -308,10 +315,8 @@ export default function WorkspaceScreen({
             {shortTermTodos.map((todo) => (
               <article className="item-row" key={`todo-short-${todo.id}`}>
                 <div>
-                  <p className="item-meta">
-                    <span className="id-chip">#{todo.id}</span>
-                  </p>
-                  <ItemText text={todo.text} />
+                  <ItemMeta id={todo.id} timestamp={extractInlineTimestamp(todo.text)} />
+                  <ItemText text={displayBody(todo.text)} />
                 </div>
                 <RowActions>
                   <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
@@ -337,11 +342,12 @@ export default function WorkspaceScreen({
             {longTermTodos.map((todo) => (
               <article className="item-row" key={`todo-long-${todo.id}`}>
                 <div>
-                  <p className="item-meta">
-                    <span className="id-chip">#{todo.id}</span>
-                    <span className="status status-promoted">Long-term</span>
-                  </p>
-                  <ItemText text={todo.text} />
+                  <ItemMeta
+                    id={todo.id}
+                    timestamp={extractInlineTimestamp(todo.text)}
+                    extra={<span className="status status-promoted">Long-term</span>}
+                  />
+                  <ItemText text={displayBody(todo.text)} />
                 </div>
                 <RowActions>
                   <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
@@ -393,11 +399,12 @@ export default function WorkspaceScreen({
             {pendingPotentials.map((potential) => (
               <article className="item-row" key={`potential-${potential.id}`}>
                 <div>
-                  <p className="item-meta">
-                    <span className="id-chip">#{potential.id}</span>{" "}
-                    <span className={statusClass(potential.status)}>{potential.status}</span>
-                  </p>
-                  <ItemText text={potential.text} />
+                  <ItemMeta
+                    id={potential.id}
+                    timestamp={potential.timestamp}
+                    extra={<span className={statusClass(potential.status)}>{potential.status}</span>}
+                  />
+                  <ItemText text={displayBody(potential.text)} />
                 </div>
                 <RowActions>
                   <ActionButton
@@ -423,11 +430,12 @@ export default function WorkspaceScreen({
               ? reviewedPotentials.map((potential) => (
                   <article className="item-row" key={`potential-reviewed-${potential.id}`}>
                     <div>
-                      <p className="item-meta">
-                        <span className="id-chip">#{potential.id}</span>{" "}
-                        <span className={statusClass(potential.status)}>{potential.status}</span>
-                      </p>
-                      <ItemText text={potential.text} />
+                      <ItemMeta
+                        id={potential.id}
+                        timestamp={potential.timestamp}
+                        extra={<span className={statusClass(potential.status)}>{potential.status}</span>}
+                      />
+                      <ItemText text={displayBody(potential.text)} />
                     </div>
                   </article>
                 ))
@@ -459,8 +467,8 @@ export default function WorkspaceScreen({
                 state.done.map((item, index) => (
                   <article className="item-row" key={`done-${index}`}>
                     <div>
-                      <p className="item-meta">{item.timestamp}</p>
-                      <ItemText text={completedDisplayContent(item.text)} />
+                      <ItemMeta id={index + 1} timestamp={item.timestamp} />
+                      <ItemText text={displayBody(item.text)} />
                     </div>
                   </article>
                 ))
