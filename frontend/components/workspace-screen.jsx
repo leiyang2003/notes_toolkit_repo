@@ -112,6 +112,7 @@ export default function WorkspaceScreen({
   onAiEdit,
 }) {
   const [showReviewedPotentials, setShowReviewedPotentials] = useState(false);
+  const [showCompletedItems, setShowCompletedItems] = useState(true);
   const filteredNotes = (state.notes || []).filter(
     (note) => includesText(note.text, noteQuery) || includesText(note.section, noteQuery),
   );
@@ -409,16 +410,32 @@ export default function WorkspaceScreen({
         {showDone ? (
           <SectionCard title="Completed" count={state.done?.length || 0}>
             {state.done?.length ? (
-              state.done.map((item, index) => (
-                <article className="item-row" key={`done-${index}`}>
-                  <div>
-                    <p className="item-meta">{item.timestamp}</p>
-                    <ItemText text={item.text} />
-                  </div>
-                </article>
-              ))
+              <div className="section-tools section-tools-row">
+                <div />
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setShowCompletedItems((prev) => !prev)}
+                  type="button"
+                >
+                  {showCompletedItems ? "Hide completed" : `Show completed (${state.done.length})`}
+                </button>
+              </div>
+            ) : null}
+            {showCompletedItems ? (
+              state.done?.length ? (
+                state.done.map((item, index) => (
+                  <article className="item-row" key={`done-${index}`}>
+                    <div>
+                      <p className="item-meta">{item.timestamp}</p>
+                      <ItemText text={item.text} />
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <EmptyState text="No completed todos archived yet." />
+              )
             ) : (
-              <EmptyState text="No completed todos archived yet." />
+              <EmptyState text="Completed items are hidden." />
             )}
           </SectionCard>
         ) : null}
