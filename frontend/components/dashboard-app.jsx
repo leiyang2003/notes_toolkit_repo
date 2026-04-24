@@ -88,12 +88,12 @@ export default function DashboardApp({ initialProjectName = "" }) {
     }, 5000);
   }
 
-  async function ensureProjects() {
-    const projectPayload = await client.getProjects();
+  async function ensureProjects(apiClient) {
+    const projectPayload = await apiClient.getProjects();
     const nextProjects = Array.isArray(projectPayload.projects) ? projectPayload.projects : [];
 
     if (nextProjects.length === 0) {
-      const initResponse = await client.initProject("home");
+      const initResponse = await apiClient.initProject("home");
       const initializedProject = initResponse.project || "home";
       return [
         {
@@ -164,7 +164,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
         return;
       }
 
-      const projectRows = await ensureProjects();
+      const projectRows = await ensureProjects(freshClient);
       setProjects(projectRows);
       const preferredProject = initialProjectName || activeProject || projectRows[0]?.project || "";
       setActiveProject(preferredProject);
