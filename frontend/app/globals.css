@@ -601,6 +601,12 @@ input {
   margin-bottom: 10px;
 }
 
+.section-tools-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
 .section-tools input {
   width: 100%;
 }
@@ -617,5 +623,9 @@ input {
 @media (max-width: 700px) {
   .quick-actions .btn {
     width: 100%;
+  }
+
+  .section-tools-row {
+    grid-template-columns: 1fr;
   }
 }

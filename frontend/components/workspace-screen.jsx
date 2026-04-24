@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ACTION_TYPES } from "../lib/api-client";
 
 const FILTERS = [
@@ -110,13 +111,19 @@ export default function WorkspaceScreen({
   onRejectPotential,
   onAiEdit,
 }) {
+  const [showReviewedPotentials, setShowReviewedPotentials] = useState(false);
   const filteredNotes = (state.notes || []).filter(
     (note) => includesText(note.text, noteQuery) || includesText(note.section, noteQuery),
   );
   const filteredTodos = (state.todos || []).filter((todo) => includesText(todo.text, todoQuery));
+  const longTermTodoIds = new Set((state.long_term_todos || []).map((todo) => Number(todo.id)));
+  const shortTermTodos = filteredTodos.filter((todo) => !longTermTodoIds.has(Number(todo.id)));
+  const longTermTodos = filteredTodos.filter((todo) => longTermTodoIds.has(Number(todo.id)));
   const filteredPotentials = (state.potentials || []).filter((item) => includesText(item.text, potentialQuery));
   const pendingPotentials = filteredPotentials.filter((item) => item.status === "pending");
   const reviewedPotentials = filteredPotentials.filter((item) => item.status !== "pending");
+  const hasVisiblePotentials =
+    pendingPotentials.length > 0 || (showReviewedPotentials && reviewedPotentials.length > 0);
 
   const showNotes = viewFilter === "all" || viewFilter === "notes";
   const showTodos = viewFilter === "all" || viewFilter === "todos";
@@ -262,50 +269,90 @@ export default function WorkspaceScreen({
                 onChange={(event) => onTodoQueryChange(event.target.value)}
               />
             </div>
-            {filteredTodos.length ? (
-              filteredTodos.map((todo) => (
-                <article className="item-row" key={`todo-${todo.id}`}>
-                  <div>
-                    <p className="item-meta">
-                      <span className="id-chip">#{todo.id}</span>
-                    </p>
-                    <ItemText text={todo.text} />
-                  </div>
-                  <RowActions>
-                    <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
-                      Complete
-                    </ActionButton>
-                    <ActionButton onClick={() => onTodoLongTerm(todo.id)}>Mark LT</ActionButton>
-                    <ActionButton onClick={() => onTodoShortTerm(todo.id)}>Mark ST</ActionButton>
-                    <ActionButton
-                      onClick={() => {
-                        const nextText = window.prompt("Edit todo text", todo.text);
-                        if (nextText) {
-                          onEditTodo(todo.id, nextText);
-                        }
-                      }}
-                    >
-                      Edit
-                    </ActionButton>
-                    <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
-                  </RowActions>
-                </article>
-              ))
-            ) : (
+
+            {shortTermTodos.length ? <p className="section-divider">Short-term</p> : null}
+            {shortTermTodos.map((todo) => (
+              <article className="item-row" key={`todo-short-${todo.id}`}>
+                <div>
+                  <p className="item-meta">
+                    <span className="id-chip">#{todo.id}</span>
+                  </p>
+                  <ItemText text={todo.text} />
+                </div>
+                <RowActions>
+                  <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
+                    Complete
+                  </ActionButton>
+                  <ActionButton onClick={() => onTodoLongTerm(todo.id)}>Mark LT</ActionButton>
+                  <ActionButton
+                    onClick={() => {
+                      const nextText = window.prompt("Edit todo text", todo.text);
+                      if (nextText) {
+                        onEditTodo(todo.id, nextText);
+                      }
+                    }}
+                  >
+                    Edit
+                  </ActionButton>
+                  <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
+                </RowActions>
+              </article>
+            ))}
+
+            {longTermTodos.length ? <p className="section-divider">Long-term</p> : null}
+            {longTermTodos.map((todo) => (
+              <article className="item-row" key={`todo-long-${todo.id}`}>
+                <div>
+                  <p className="item-meta">
+                    <span className="id-chip">#{todo.id}</span>
+                    <span className="status status-promoted">Long-term</span>
+                  </p>
+                  <ItemText text={todo.text} />
+                </div>
+                <RowActions>
+                  <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
+                    Complete
+                  </ActionButton>
+                  <ActionButton onClick={() => onTodoShortTerm(todo.id)}>Mark ST</ActionButton>
+                  <ActionButton
+                    onClick={() => {
+                      const nextText = window.prompt("Edit todo text", todo.text);
+                      if (nextText) {
+                        onEditTodo(todo.id, nextText);
+                      }
+                    }}
+                  >
+                    Edit
+                  </ActionButton>
+                  <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
+                </RowActions>
+              </article>
+            ))}
+
+            {!filteredTodos.length ? (
               <EmptyState text="No matching todos." />
-            )}
+            ) : null}
           </SectionCard>
         ) : null}
 
         {showPotentials ? (
           <SectionCard title="Potential Actions" count={filteredPotentials.length}>
-            <div className="section-tools">
+            <div className="section-tools section-tools-row">
               <input
                 id="potentials-filter"
                 placeholder="Filter potential actions"
                 value={potentialQuery}
                 onChange={(event) => onPotentialQueryChange(event.target.value)}
               />
+              {reviewedPotentials.length ? (
+                <button
+                  className="btn btn-ghost"
+                  onClick={() => setShowReviewedPotentials((prev) => !prev)}
+                  type="button"
+                >
+                  {showReviewedPotentials ? "Hide reviewed" : `Show reviewed (${reviewedPotentials.length})`}
+                </button>
+              ) : null}
             </div>
 
             {pendingPotentials.length ? <p className="section-divider">Pending</p> : null}
@@ -337,20 +384,25 @@ export default function WorkspaceScreen({
               </article>
             ))}
 
-            {reviewedPotentials.length ? <p className="section-divider">Reviewed</p> : null}
-            {reviewedPotentials.map((potential) => (
-              <article className="item-row" key={`potential-reviewed-${potential.id}`}>
-                <div>
-                  <p className="item-meta">
-                    <span className="id-chip">#{potential.id}</span>{" "}
-                    <span className={statusClass(potential.status)}>{potential.status}</span>
-                  </p>
-                  <ItemText text={potential.text} />
-                </div>
-              </article>
-            ))}
+            {showReviewedPotentials && reviewedPotentials.length ? <p className="section-divider">Reviewed</p> : null}
+            {showReviewedPotentials
+              ? reviewedPotentials.map((potential) => (
+                  <article className="item-row" key={`potential-reviewed-${potential.id}`}>
+                    <div>
+                      <p className="item-meta">
+                        <span className="id-chip">#{potential.id}</span>{" "}
+                        <span className={statusClass(potential.status)}>{potential.status}</span>
+                      </p>
+                      <ItemText text={potential.text} />
+                    </div>
+                  </article>
+                ))
+              : null}
 
             {!filteredPotentials.length ? <EmptyState text="No matching potential actions." /> : null}
+            {filteredPotentials.length && !hasVisiblePotentials ? (
+              <EmptyState text="Reviewed actions are hidden." />
+            ) : null}
           </SectionCard>
         ) : null}
 

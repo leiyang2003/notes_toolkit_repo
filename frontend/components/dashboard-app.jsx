@@ -359,23 +359,29 @@ export default function DashboardApp({ initialProjectName = "" }) {
           onLogout={logout}
           onAddNote={async (event) => {
             event.preventDefault();
-            const form = new FormData(event.currentTarget);
+            const formEl = event.currentTarget;
+            const form = new FormData(formEl);
             const text = String(form.get("text") || "").trim();
             if (!text) {
               return;
             }
-            await runAction(ACTION_TYPES.ADD_NOTE, { text });
-            event.currentTarget.reset();
+            const result = await runAction(ACTION_TYPES.ADD_NOTE, { text });
+            if (result) {
+              formEl.reset();
+            }
           }}
           onAddTodo={async (event) => {
             event.preventDefault();
-            const form = new FormData(event.currentTarget);
+            const formEl = event.currentTarget;
+            const form = new FormData(formEl);
             const text = String(form.get("text") || "").trim();
             if (!text) {
               return;
             }
-            await runAction(ACTION_TYPES.ADD_TODO, { text });
-            event.currentTarget.reset();
+            const result = await runAction(ACTION_TYPES.ADD_TODO, { text });
+            if (result) {
+              formEl.reset();
+            }
           }}
           onEditNote={(id, text) => runAction(ACTION_TYPES.EDIT_NOTE, { id, text })}
           onDismissNote={(id) => runAction(ACTION_TYPES.DISMISS_NOTE, { id })}
