@@ -1,8 +1,8 @@
 # DESIGN.md
 
 Project: Notes Toolkit Dashboard
-Version: 1.0
-Last Updated: 2026-04-23
+Version: 2.0
+Last Updated: 2026-04-24
 
 ## Intent
 
@@ -41,7 +41,8 @@ Use semantic tokens in CSS variables:
 
 ## Typography
 
-- Primary font stack: `"Roboto", "Noto Sans SC", "Segoe UI", sans-serif`
+- Primary font stack: `"Manrope", "Segoe UI", sans-serif`
+- Display font stack: `"Fraunces", Georgia, serif`
 - Page title: 24px, semi-bold
 - Section titles: 15px, semi-bold
 - Body/list rows: 13px
@@ -113,8 +114,8 @@ Use semantic tokens in CSS variables:
 
 ## Implementation Mapping
 
-- Design tokens are implemented in `frontend/index.html` inside `:root`.
-- Component styles (cards, rows, buttons, inputs, focus, motion) are implemented in the same file.
+- Design tokens are implemented in `frontend/app/globals.css` inside `:root`.
+- Component styles (cards, rows, buttons, inputs, focus, motion) are implemented in `frontend/app/globals.css`.
 
 ## References
 

@@ -1,0 +1,394 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import LoginScreen from "./login-screen";
+import ToastStack from "./toast-stack";
+import WorkspaceScreen, { mapAiEditAction, mapEditAction } from "./workspace-screen";
+import { ACTION_TYPES, ApiError, createApiClient } from "../lib/api-client";
+import { loadRuntimeConfig } from "../lib/runtime-config";
+
+const EMPTY_STATE = {
+  notes: [],
+  todos: [],
+  potentials: [],
+  done: [],
+  notes_count: 0,
+  todo_count: 0,
+  potential_pending_count: 0,
+  updated_at: "",
+};
+
+const PREVIEW_STATE = {
+  notes: [
+    { id: 1, section: "Changes Made", text: "Aligned dashboard cards with stronger visual hierarchy and faster scan patterns." },
+    { id: 2, section: "Focus Today", text: "Validate desktop and mobile UI before shipping the refactor." },
+  ],
+  todos: [
+    { id: 1, text: "Finalize responsive spacing for action rows" },
+    { id: 2, text: "Review error handling text in toasts" },
+  ],
+  potentials: [
+    { id: 1, status: "pending", text: "Add keyboard shortcuts for quick todo triage" },
+    { id: 2, status: "promoted", text: "Introduce project-level quick filters" },
+  ],
+  done: [{ timestamp: "2026-04-24 12:00", text: "Migrated frontend to fully componentized Next.js" }],
+  notes_count: 2,
+  todo_count: 2,
+  potential_pending_count: 1,
+  updated_at: "2026-04-24 14:00 CST",
+};
+
+function nextToastId() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function focusById(id) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const element = document.getElementById(id);
+  if (!element) {
+    return;
+  }
+  element.focus();
+}
+
+function isTypingTarget(target) {
+  if (!target) {
+    return false;
+  }
+  const tag = String(target.tagName || "").toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target.isContentEditable);
+}
+
+export default function DashboardApp({ initialProjectName = "" }) {
+  const [backendBaseUrl, setBackendBaseUrl] = useState("");
+  const [session, setSession] = useState({ ok: true, logged_in: false, email: "" });
+  const [projects, setProjects] = useState([]);
+  const [activeProject, setActiveProject] = useState(initialProjectName);
+  const [state, setState] = useState(EMPTY_STATE);
+  const [isBooting, setIsBooting] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const [isQaMobileViewport, setIsQaMobileViewport] = useState(false);
+  const [isPreviewWorkspace, setIsPreviewWorkspace] = useState(false);
+  const [viewFilter, setViewFilter] = useState("all");
+  const [noteQuery, setNoteQuery] = useState("");
+  const [todoQuery, setTodoQuery] = useState("");
+  const [potentialQuery, setPotentialQuery] = useState("");
+  const latestStateVersion = useRef(0);
+
+  const client = useMemo(() => createApiClient(backendBaseUrl), [backendBaseUrl]);
+
+  function pushToast(kind, title, message) {
+    const id = nextToastId();
+    setToasts((prev) => [...prev, { id, kind, title, message }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id));
+    }, 5000);
+  }
+
+  async function ensureProjects() {
+    const projectPayload = await client.getProjects();
+    const nextProjects = Array.isArray(projectPayload.projects) ? projectPayload.projects : [];
+
+    if (nextProjects.length === 0) {
+      const initResponse = await client.initProject("home");
+      const initializedProject = initResponse.project || "home";
+      return [
+        {
+          project: initializedProject,
+          todo_count: initResponse.state?.todo_count || 0,
+          potential_pending_count: initResponse.state?.potential_pending_count || 0,
+          last_activity: initResponse.state?.updated_at || "",
+        },
+      ];
+    }
+
+    return nextProjects;
+  }
+
+  async function refreshState(projectName, { silent = false } = {}) {
+    if (!projectName || isPreviewWorkspace) {
+      return;
+    }
+
+    if (!silent) {
+      setIsRefreshing(true);
+    }
+
+    try {
+      const response = await client.getProjectState(projectName);
+      const version = Number(response.state_version_ns || 0);
+      if (version >= latestStateVersion.current) {
+        latestStateVersion.current = version;
+        setState(response);
+      }
+    } catch (error) {
+      pushToast("error", "Refresh failed", error.message || "Could not refresh project state.");
+    } finally {
+      if (!silent) {
+        setIsRefreshing(false);
+      }
+    }
+  }
+
+  async function bootstrap() {
+    setIsBooting(true);
+    try {
+      const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const previewMode = params?.get("preview") === "workspace";
+      setIsPreviewWorkspace(previewMode);
+
+      if (previewMode) {
+        setSession({ ok: true, logged_in: true, email: "preview@notes-toolkit.local" });
+        setProjects([
+          { project: "preview-home", todo_count: 2, potential_pending_count: 1, last_activity: PREVIEW_STATE.updated_at },
+        ]);
+        setActiveProject("preview-home");
+        setState(PREVIEW_STATE);
+        return;
+      }
+
+      const runtime = await loadRuntimeConfig();
+      setBackendBaseUrl(runtime.backendBaseUrl || "");
+
+      const freshClient = createApiClient(runtime.backendBaseUrl || "");
+      const sessionPayload = await freshClient.getSession();
+      setSession(sessionPayload);
+
+      if (!sessionPayload.logged_in) {
+        setProjects([]);
+        setActiveProject("");
+        setState(EMPTY_STATE);
+        return;
+      }
+
+      const projectRows = await ensureProjects();
+      setProjects(projectRows);
+      const preferredProject = initialProjectName || activeProject || projectRows[0]?.project || "";
+      setActiveProject(preferredProject);
+
+      if (preferredProject) {
+        const nextState = await freshClient.getProjectState(preferredProject);
+        latestStateVersion.current = Number(nextState.state_version_ns || 0);
+        setState(nextState);
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Failed to bootstrap workspace.";
+      pushToast("error", "Startup failed", message);
+    } finally {
+      setIsBooting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setIsQaMobileViewport(params.get("viewport") === "mobile");
+    }
+    bootstrap();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialProjectName]);
+
+  useEffect(() => {
+    if (!session.logged_in || !activeProject || isPreviewWorkspace) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      refreshState(activeProject, { silent: true });
+    }, 15000);
+
+    return () => window.clearInterval(timer);
+  }, [session.logged_in, activeProject, isPreviewWorkspace]);
+
+  useEffect(() => {
+    if (!session.logged_in) {
+      return undefined;
+    }
+
+    const onKeyDown = (event) => {
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+
+      const key = String(event.key || "").toLowerCase();
+      if (key === "n") {
+        event.preventDefault();
+        focusById("new-note");
+      }
+      if (key === "t") {
+        event.preventDefault();
+        focusById("new-todo");
+      }
+      if (key === "r") {
+        event.preventDefault();
+        if (activeProject && !isPreviewWorkspace) {
+          refreshState(activeProject);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [session.logged_in, activeProject, isPreviewWorkspace]);
+
+  async function runAction(action, payload = {}) {
+    if (!activeProject) {
+      return;
+    }
+
+    if (isPreviewWorkspace) {
+      pushToast("info", "Preview mode", "Action is disabled in preview mode.");
+      return null;
+    }
+
+    setIsRefreshing(true);
+    try {
+      const response = await client.runAction(activeProject, { action, actor: "web", ...payload });
+      if (response.state) {
+        latestStateVersion.current = Number(response.state.state_version_ns || 0);
+        setState(response.state);
+      } else {
+        await refreshState(activeProject, { silent: true });
+      }
+      if (response.message) {
+        pushToast("success", "Updated", response.message);
+      }
+      return response;
+    } catch (error) {
+      pushToast("error", "Action failed", error.message || "Unable to complete action.");
+      return null;
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  async function handleAiEdit(kind, id) {
+    const instruction = window.prompt("Describe how to rewrite this entry");
+    if (!instruction) {
+      return;
+    }
+
+    const suggestion = await runAction(mapAiEditAction(kind), { id, instruction });
+    if (!suggestion?.edited_text) {
+      return;
+    }
+
+    const approved = window.confirm(`AI suggestion:\n\n${suggestion.edited_text}\n\nApply this edit?`);
+    if (!approved) {
+      return;
+    }
+
+    await runAction(mapEditAction(kind), { id, text: suggestion.edited_text });
+  }
+
+  function login() {
+    const loginUrl = client.loginUrl(window.location.href);
+    window.location.href = loginUrl;
+  }
+
+  async function logout() {
+    try {
+      await client.logout();
+    } finally {
+      setSession({ ok: true, logged_in: false, email: "" });
+      setProjects([]);
+      setState(EMPTY_STATE);
+      setActiveProject("");
+      pushToast("info", "Signed out", "Your local session has ended.");
+    }
+  }
+
+  async function handleProjectChange(projectName) {
+    setActiveProject(projectName);
+    if (!isPreviewWorkspace) {
+      await refreshState(projectName);
+    }
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", `/project/${encodeURIComponent(projectName)}`);
+    }
+  }
+
+  async function handleManualRefresh() {
+    if (!activeProject) {
+      return;
+    }
+    if (isPreviewWorkspace) {
+      pushToast("info", "Preview mode", "Preview data is static.");
+      return;
+    }
+    await refreshState(activeProject);
+  }
+
+  if (isBooting) {
+    return (
+      <main className="loading-screen">
+        <div className="loading-card">
+          <p className="eyebrow">Loading</p>
+          <h1>Preparing your workspace...</h1>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <div className={isQaMobileViewport ? "qa-mobile" : ""}>
+      {!session.logged_in ? (
+        <LoginScreen onLogin={login} backendBaseUrl={backendBaseUrl} />
+      ) : (
+        <WorkspaceScreen
+          session={session}
+          projects={projects}
+          activeProject={activeProject}
+          state={state}
+          isRefreshing={isRefreshing}
+          viewFilter={viewFilter}
+          noteQuery={noteQuery}
+          todoQuery={todoQuery}
+          potentialQuery={potentialQuery}
+          onViewFilterChange={setViewFilter}
+          onNoteQueryChange={setNoteQuery}
+          onTodoQueryChange={setTodoQuery}
+          onPotentialQueryChange={setPotentialQuery}
+          onQuickAddNote={() => focusById("new-note")}
+          onQuickAddTodo={() => focusById("new-todo")}
+          onProjectChange={handleProjectChange}
+          onRefresh={handleManualRefresh}
+          onLogout={logout}
+          onAddNote={async (event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const text = String(form.get("text") || "").trim();
+            if (!text) {
+              return;
+            }
+            await runAction(ACTION_TYPES.ADD_NOTE, { text });
+            event.currentTarget.reset();
+          }}
+          onAddTodo={async (event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            const text = String(form.get("text") || "").trim();
+            if (!text) {
+              return;
+            }
+            await runAction(ACTION_TYPES.ADD_TODO, { text });
+            event.currentTarget.reset();
+          }}
+          onEditNote={(id, text) => runAction(ACTION_TYPES.EDIT_NOTE, { id, text })}
+          onDismissNote={(id) => runAction(ACTION_TYPES.DISMISS_NOTE, { id })}
+          onCompleteTodo={(id) => runAction(ACTION_TYPES.COMPLETE_TODO, { id })}
+          onTodoLongTerm={(id) => runAction(ACTION_TYPES.MARK_LONG_TERM_TODO, { id })}
+          onTodoShortTerm={(id) => runAction(ACTION_TYPES.MARK_SHORT_TERM_TODO, { id })}
+          onEditTodo={(id, text) => runAction(ACTION_TYPES.EDIT_TODO, { id, text })}
+          onApprovePotential={(id) => runAction(ACTION_TYPES.APPROVE_POTENTIAL, { id })}
+          onRejectPotential={(id) => runAction(ACTION_TYPES.REJECT_POTENTIAL, { id })}
+          onAiEdit={handleAiEdit}
+        />
+      )}
+      <ToastStack toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((item) => item.id !== id))} />
+    </div>
+  );
+}

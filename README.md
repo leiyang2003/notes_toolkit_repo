@@ -1,41 +1,29 @@
 # Notes Toolkit
 
-Split frontend/backend Notes Toolkit with Google OAuth redirect login and per-user local-file storage.
+A two-service Notes Toolkit:
 
-## Included
+- `apps/backend`: FastAPI backend (auth, session, project state, actions).
+- `frontend`: Next.js App Router frontend (login + workspace UI).
+- `packages/contracts`: shared action/API contracts (Python + web constants).
 
-- Core logic:
-  - `notes_app.py`
-  - `notes_cli.py`
-  - `notes_todo_dashboard.py`
-  - `notes_todo_agent.py`
-  - `notes_potential_todo_processor.py`
-- Launchers:
-  - `bin/notes`
-  - `bin/notes-todo-dashboard`
-  - `bin/notes-todo-watch`
-  - `bin/notes-todo-process`
+The data format is unchanged: files are still stored in the same vault layout.
 
-## Auth model
+## Architecture
 
-- Frontend is dynamic service: `frontend/app.py` (serves `frontend/index.html` with runtime config).
-- Backend is API/Auth service: `notes_todo_dashboard.py`.
-- Backend root behavior:
-  - `GET /health` returns backend health JSON.
-  - `GET /` redirects to `FRONTEND_APP_URL` when configured (otherwise returns health JSON).
-- Login flow is server-side OAuth:
-  - Frontend redirects to `/auth/google/login`.
-  - Backend handles `/auth/google/callback`, then sets session cookie.
-- Backend scopes data by user:
-  - project folder = `u_<google_sub>__<project_name>`
+- Frontend runtime: pure Next.js (`frontend/`), no static HTML template injection.
+- Backend runtime: pure FastAPI (`notes_todo_dashboard.py` starts `apps.backend.main:create_app`).
+- Auth: Google OAuth redirect + cookie session.
+- Storage: local file repository in `NOTES_VAULT_ROOT`.
 
-## Data Layout
+## Data layout
 
-- Vault root (default): `~/Documents/notes_vault`
-- Per scoped project files:
-  - `active/NOTES.md`
-  - `archive/TODO_DONE.md`
-  - `archive/log.md`
+Default vault root: `~/Documents/notes_vault`
+
+Per project:
+
+- `active/NOTES.md`
+- `archive/TODO_DONE.md`
+- `archive/log.md`
 
 Override vault root:
 
@@ -43,97 +31,82 @@ Override vault root:
 export NOTES_VAULT_ROOT="/your/path/notes_vault"
 ```
 
-## Actionable 判定（GPT）
+## Local development
 
-- `add note` 后，系统会在扫描 Potential To Do 时优先使用 GPT 判定该 note 是否是可执行待办。
-- 需要配置：
-
-```bash
-export OPENAI_API_KEY="<your-openai-api-key>"
-```
-
-- 可选配置：
-  - `NOTES_ACTIONABLE_MODEL`（默认 `gpt-4o-mini`）
-  - `NOTES_ACTIONABLE_TIMEOUT_SEC`（默认 `8`）
-  - `NOTES_ACTIONABLE_USE_LLM`（默认 `1`，可设 `0` 关闭并退回本地规则）
-  - `OPENAI_RESPONSES_URL`（默认 `https://api.openai.com/v1/responses`）
-
-## Local run (split)
-
-1) Start backend:
+### 1) Start backend
 
 ```bash
-export GOOGLE_CLIENT_ID="<your-google-oauth-client-id>"
-export GOOGLE_CLIENT_SECRET="<your-google-oauth-client-secret>"
+export GOOGLE_CLIENT_ID="<google-client-id>"
+export GOOGLE_CLIENT_SECRET="<google-client-secret>"
 export GOOGLE_REDIRECT_URI="http://127.0.0.1:8765/auth/google/callback"
 export FRONTEND_ORIGIN="http://127.0.0.1:5500"
 export FRONTEND_APP_URL="http://127.0.0.1:5500"
 export COOKIE_SAMESITE="Lax"
+export NOTES_VAULT_ROOT="$PWD/.notes_vault"
+
+python3 -m pip install -r requirements.txt
 python3 notes_todo_dashboard.py --host 127.0.0.1 --port 8765
 ```
 
-2) Start frontend dynamic server:
+### 2) Start frontend
 
 ```bash
-export BACKEND_BASE_URL="http://127.0.0.1:8765"
-HOST=127.0.0.1 PORT=5500 python3 frontend/app.py
+cd frontend
+npm install
+BACKEND_BASE_URL="http://127.0.0.1:8765" PORT=5500 npm run dev
 ```
 
-3) Open:
+### 3) Open app
 
-`http://127.0.0.1:5500`
+- Frontend: `http://127.0.0.1:5500`
+- Backend health: `http://127.0.0.1:8765/health`
 
-4) In UI:
+## Backend API summary
 
-- Set backend URL to `http://127.0.0.1:8765`
-- Click `Google Login (Redirect)`
-- Complete Google authorization and return
+- `GET /health`
+- `GET /api/session`
+- `GET /api/projects`
+- `POST /api/init`
+- `GET /api/project/{project}/state`
+- `POST /api/project/{project}/actions`
+- `GET /auth/google/login`
+- `GET /auth/google/callback`
+- `POST /auth/logout`
 
-## Render deployment (split frontend/backend)
+## Actions
 
-### Backend service (this repo root)
+Action names are shared in `packages/contracts`:
 
-Use existing `render.yaml` service `notes-dashboard`.
+- `add_note`
+- `add_todo`
+- `approve_potential`
+- `reject_potential`
+- `complete_todo`
+- `mark_long_term_todo`
+- `mark_short_term_todo`
+- `dismiss_note`
+- `edit_note`
+- `edit_todo`
+- `ai_suggest_edit_note`
+- `ai_suggest_edit_todo`
 
-Required env vars:
+## Render deployment
+
+`render.yaml` defines two web services:
+
+- `notes-dashboard` (backend Dockerfile at repo root)
+- `notes-frontend-web` (frontend Dockerfile)
+
+Required backend env vars:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REDIRECT_URI=https://<backend-domain>/auth/google/callback`
-- `SESSION_SECRET=<random-long-string>`
-- `FRONTEND_ORIGIN=https://<frontend-domain>`
-- `FRONTEND_APP_URL=https://<frontend-domain>`
-- `COOKIE_SAMESITE=None`（当前后端是不同域名时建议使用；同站点/同域可用 `Lax`）
+- `GOOGLE_REDIRECT_URI`
+- `SESSION_SECRET`
+- `FRONTEND_ORIGIN`
+- `FRONTEND_APP_URL`
+
+Recommended cookie settings for cross-site deployment:
+
+- `COOKIE_SAMESITE=None`
 - `COOKIE_SECURE=true`
-
-Persistent disk:
-
-- mount `/data` (already set)
-- `NOTES_VAULT_ROOT=/data/notes_vault`
-
-### Frontend service
-
-Deploy `frontend/Dockerfile` as a separate Render web service.
-
-Frontend env vars:
-
-- `BACKEND_BASE_URL=https://<backend-domain>`
-
-After deploy:
-
-- Open frontend URL
-- Login through Google redirect
-
-### Required Google OAuth config
-
-In Google Cloud Console (OAuth client):
-
-- Add your callback URL to **Authorized redirect URIs**:
-  - `https://<backend-domain>/auth/google/callback`
-  - `GOOGLE_REDIRECT_URI` must exactly match one configured redirect URI.
-
-## Install command wrappers
-
-```bash
-./install.sh
-```
