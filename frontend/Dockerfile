@@ -10,6 +10,7 @@ WORKDIR /frontend
 COPY --from=deps /frontend/node_modules ./node_modules
 COPY frontend ./
 COPY packages /packages
+RUN mkdir -p /frontend/public
 RUN npm run build
 
 FROM node:20-alpine AS runner
