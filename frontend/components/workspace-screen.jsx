@@ -143,6 +143,7 @@ export default function WorkspaceScreen({
   onCreateProject,
   onCancelCreateProject,
   isCreatingProject,
+  isCreatingProjectSubmitting,
   newProjectName,
   onNewProjectNameChange,
   onRefresh,
@@ -256,10 +257,10 @@ export default function WorkspaceScreen({
               maxLength={80}
               autoFocus
             />
-            <button className="btn btn-primary" type="submit" disabled={isRefreshing || !String(newProjectName || "").trim()}>
-              {isRefreshing ? "Creating..." : "Create"}
+            <button className="btn btn-primary" type="submit" disabled={isCreatingProjectSubmitting || !String(newProjectName || "").trim()}>
+              {isCreatingProjectSubmitting ? "Creating..." : "Create"}
             </button>
-            <button className="btn" type="button" onClick={onCancelCreateProject} disabled={isRefreshing}>
+            <button className="btn" type="button" onClick={onCancelCreateProject} disabled={isCreatingProjectSubmitting}>
               Cancel
             </button>
           </form>
@@ -301,8 +302,8 @@ export default function WorkspaceScreen({
           <label htmlFor="new-note">New note</label>
           <div>
             <input id="new-note" name="text" placeholder="Write a note update..." required />
-            <button className="btn btn-primary" type="submit">
-              Add note
+            <button className="btn btn-primary" type="submit" disabled={isLoading("add-note")}>
+              {isLoading("add-note") ? "Adding..." : "Add note"}
             </button>
           </div>
         </form>
@@ -310,8 +311,8 @@ export default function WorkspaceScreen({
           <label htmlFor="new-todo">New todo</label>
           <div>
             <input id="new-todo" name="text" placeholder="Describe the next action..." required />
-            <button className="btn btn-accent" type="submit">
-              Add todo
+            <button className="btn btn-accent" type="submit" disabled={isLoading("add-todo")}>
+              {isLoading("add-todo") ? "Adding..." : "Add todo"}
             </button>
           </div>
         </form>
@@ -331,7 +332,9 @@ export default function WorkspaceScreen({
                     <ItemText text={displayBody(note.text)} />
                   </div>
                   <RowActions>
-                    <ActionButton onClick={() => openEditDialog("note", note.id, note.text)}>Edit</ActionButton>
+                    <ActionButton onClick={() => openEditDialog("note", note.id, note.text)} disabled={isLoading(`edit-note-${note.id}`)}>
+                      {isLoading(`edit-note-${note.id}`) ? "Saving..." : "Edit"}
+                    </ActionButton>
                     <ActionButton onClick={() => onAiEdit("note", note.id)}>AI edit</ActionButton>
                     <ActionButton className="danger" onClick={() => onDismissNote(note.id)} disabled={isLoading(`dismiss-note-${note.id}`)}>
                       {isLoading(`dismiss-note-${note.id}`) ? "Dismissing..." : "Dismiss"}
@@ -365,7 +368,9 @@ export default function WorkspaceScreen({
                   <ActionButton onClick={() => onTodoLongTerm(todo.id)} disabled={isLoading(`mark-lt-${todo.id}`)}>
                     {isLoading(`mark-lt-${todo.id}`) ? "Marking..." : "Mark LT"}
                   </ActionButton>
-                  <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)}>Edit</ActionButton>
+                  <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)} disabled={isLoading(`edit-todo-${todo.id}`)}>
+                    {isLoading(`edit-todo-${todo.id}`) ? "Saving..." : "Edit"}
+                  </ActionButton>
                   <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
                 </RowActions>
               </article>
@@ -389,7 +394,9 @@ export default function WorkspaceScreen({
                   <ActionButton onClick={() => onTodoShortTerm(todo.id)} disabled={isLoading(`mark-st-${todo.id}`)}>
                     {isLoading(`mark-st-${todo.id}`) ? "Marking..." : "Mark ST"}
                   </ActionButton>
-                  <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)}>Edit</ActionButton>
+                  <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)} disabled={isLoading(`edit-todo-${todo.id}`)}>
+                    {isLoading(`edit-todo-${todo.id}`) ? "Saving..." : "Edit"}
+                  </ActionButton>
                   <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
                 </RowActions>
               </article>
@@ -512,8 +519,15 @@ export default function WorkspaceScreen({
             <button className="btn" type="button" onClick={closeEditDialog}>
               Cancel
             </button>
-            <button className="btn btn-primary" type="submit" form="edit-item-form" disabled={!String(editDialog.text || "").trim()}>
-              Save
+            <button
+              className="btn btn-primary"
+              type="submit"
+              form="edit-item-form"
+              disabled={!String(editDialog.text || "").trim() || (editDialog.kind === "note" ? isLoading(`edit-note-${editDialog.id}`) : isLoading(`edit-todo-${editDialog.id}`))}
+            >
+              {editDialog.kind === "note"
+                ? (isLoading(`edit-note-${editDialog.id}`) ? "Saving..." : "Save")
+                : (isLoading(`edit-todo-${editDialog.id}`) ? "Saving..." : "Save")}
             </button>
           </>
         }

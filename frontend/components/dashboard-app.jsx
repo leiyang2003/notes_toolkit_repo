@@ -91,6 +91,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
   const [potentialQuery, setPotentialQuery] = useState("");
   const [activeActionKey, setActiveActionKey] = useState("");
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [isCreatingProjectSubmitting, setIsCreatingProjectSubmitting] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [aiDialog, setAiDialog] = useState({
     open: false,
@@ -254,7 +255,6 @@ export default function DashboardApp({ initialProjectName = "" }) {
       return null;
     }
 
-    setIsRefreshing(true);
     try {
       const response = await client.runAction(activeProject, { action, actor: "web", ...payload });
       if (response.state) {
@@ -269,8 +269,6 @@ export default function DashboardApp({ initialProjectName = "" }) {
     } catch (error) {
       pushToast("error", "Action failed", error.message || "Unable to complete action.");
       return null;
-    } finally {
-      setIsRefreshing(false);
     }
   }
 
@@ -361,7 +359,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
       return;
     }
 
-    setIsRefreshing(true);
+    setIsCreatingProjectSubmitting(true);
     try {
       const created = await client.createProject(normalized);
       const nextProjects = await refreshProjectsList();
@@ -387,7 +385,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
     } catch (error) {
       pushToast("error", "Create project failed", error.message || "Unable to create project.");
     } finally {
-      setIsRefreshing(false);
+      setIsCreatingProjectSubmitting(false);
     }
   }
 
@@ -452,6 +450,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
           onCreateProject={handleCreateProject}
           onCancelCreateProject={handleCancelCreateProject}
           isCreatingProject={isCreatingProject}
+          isCreatingProjectSubmitting={isCreatingProjectSubmitting}
           newProjectName={newProjectName}
           onNewProjectNameChange={setNewProjectName}
           onRefresh={handleManualRefresh}
@@ -464,7 +463,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
             if (!text) {
               return;
             }
-            const result = await runAction(ACTION_TYPES.ADD_NOTE, { text });
+            const result = await runActionWithLoading("add-note", ACTION_TYPES.ADD_NOTE, { text });
             if (result) {
               formEl.reset();
             }
@@ -477,17 +476,17 @@ export default function DashboardApp({ initialProjectName = "" }) {
             if (!text) {
               return;
             }
-            const result = await runAction(ACTION_TYPES.ADD_TODO, { text });
+            const result = await runActionWithLoading("add-todo", ACTION_TYPES.ADD_TODO, { text });
             if (result) {
               formEl.reset();
             }
           }}
-          onEditNote={(id, text) => runAction(ACTION_TYPES.EDIT_NOTE, { id, text })}
+          onEditNote={(id, text) => runActionWithLoading(`edit-note-${id}`, ACTION_TYPES.EDIT_NOTE, { id, text })}
           onDismissNote={(id) => runActionWithLoading(`dismiss-note-${id}`, ACTION_TYPES.DISMISS_NOTE, { id })}
           onCompleteTodo={(id) => runActionWithLoading(`complete-todo-${id}`, ACTION_TYPES.COMPLETE_TODO, { id })}
           onTodoLongTerm={(id) => runActionWithLoading(`mark-lt-${id}`, ACTION_TYPES.MARK_LONG_TERM_TODO, { id })}
           onTodoShortTerm={(id) => runActionWithLoading(`mark-st-${id}`, ACTION_TYPES.MARK_SHORT_TERM_TODO, { id })}
-          onEditTodo={(id, text) => runAction(ACTION_TYPES.EDIT_TODO, { id, text })}
+          onEditTodo={(id, text) => runActionWithLoading(`edit-todo-${id}`, ACTION_TYPES.EDIT_TODO, { id, text })}
           onApprovePotential={(id) => runActionWithLoading(`approve-potential-${id}`, ACTION_TYPES.APPROVE_POTENTIAL, { id })}
           onRejectPotential={(id) => runActionWithLoading(`reject-potential-${id}`, ACTION_TYPES.REJECT_POTENTIAL, { id })}
           onAiEdit={openAiEditDialog}
