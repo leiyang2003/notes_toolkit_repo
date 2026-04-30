@@ -61,6 +61,19 @@ function isTypingTarget(target) {
   return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target.isContentEditable);
 }
 
+function stripSystemPrefixes(text) {
+  let raw = String(text || "").trim();
+  raw = raw.replace(/^\s*-\s*\[[ xX]\]\s*/, "").trim();
+  while (true) {
+    const next = raw.replace(/^\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*/, "").replace(/^\s*\[LT\]\s*/i, "").trim();
+    if (next === raw) {
+      break;
+    }
+    raw = next;
+  }
+  return raw;
+}
+
 export default function DashboardApp({ initialProjectName = "" }) {
   const [backendBaseUrl, setBackendBaseUrl] = useState("");
   const [session, setSession] = useState({ ok: true, logged_in: false, email: "" });
@@ -82,6 +95,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
     open: false,
     kind: "note",
     id: null,
+    originalText: "",
     instruction: "",
     suggestion: "",
     step: "instruction",
@@ -260,11 +274,11 @@ export default function DashboardApp({ initialProjectName = "" }) {
   }
 
   function openAiEditDialog(kind, id) {
-    setAiDialog({ open: true, kind, id, instruction: "", suggestion: "", step: "instruction", loading: false });
+    setAiDialog({ open: true, kind, id, originalText: "", instruction: "", suggestion: "", step: "instruction", loading: false });
   }
 
   function closeAiEditDialog() {
-    setAiDialog({ open: false, kind: "note", id: null, instruction: "", suggestion: "", step: "instruction", loading: false });
+    setAiDialog({ open: false, kind: "note", id: null, originalText: "", instruction: "", suggestion: "", step: "instruction", loading: false });
   }
 
   async function submitAiInstruction(event) {
@@ -281,7 +295,13 @@ export default function DashboardApp({ initialProjectName = "" }) {
       return;
     }
 
-    setAiDialog((prev) => ({ ...prev, loading: false, suggestion: suggestion.edited_text, step: "preview" }));
+    setAiDialog((prev) => ({
+      ...prev,
+      loading: false,
+      originalText: stripSystemPrefixes(String(suggestion.original_text || "")),
+      suggestion: stripSystemPrefixes(String(suggestion.edited_text || "")),
+      step: "preview",
+    }));
   }
 
   async function applyAiSuggestion() {
@@ -507,8 +527,15 @@ export default function DashboardApp({ initialProjectName = "" }) {
           </form>
         ) : (
           <div className="dialog-form">
+            <label htmlFor="ai-original">Original</label>
+            <textarea id="ai-original" rows={4} value={aiDialog.originalText} readOnly />
             <label htmlFor="ai-suggestion">AI suggestion</label>
-            <textarea id="ai-suggestion" rows={8} value={aiDialog.suggestion} readOnly />
+            <textarea
+              id="ai-suggestion"
+              rows={8}
+              value={aiDialog.suggestion}
+              onChange={(event) => setAiDialog((prev) => ({ ...prev, suggestion: event.target.value }))}
+            />
           </div>
         )}
       </DialogModal>

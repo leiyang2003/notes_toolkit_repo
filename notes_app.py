@@ -609,16 +609,28 @@ def suggest_text_edit_with_ai(original_text: str, instruction: str, *, kind: str
     model = os.environ.get("NOTES_AI_EDIT_MODEL", "").strip() or os.environ.get("NOTES_ACTIONABLE_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
     timeout = float(os.environ.get("NOTES_AI_EDIT_TIMEOUT_SEC", "15").strip() or "15")
 
+    # Remove system-managed prefixes before sending text to AI.
+    editable_source = source
+    editable_source = re.sub(r"^\s*-\s*\[[ xX]\]\s*", "", editable_source).strip()
+    while True:
+        next_text = TIMESTAMP_PREFIX_RE.sub("", editable_source)
+        next_text = LONG_TERM_PREFIX_RE.sub("", next_text).strip()
+        if next_text == editable_source:
+            break
+        editable_source = next_text
+
     system_prompt = (
-        "You rewrite existing note text. "
-        "Apply the user instruction to the original text. "
+        "You edit existing note or todo text. "
+        "Apply the user instruction as a revision to the original text, not as a replacement command. "
+        "Preserve the original meaning and content unless the instruction explicitly asks to add/remove something. "
+        "Make minimal necessary changes. "
         "Keep the original language unless explicitly requested. "
-        "Do not introduce new facts not implied by the source. "
-        "Return only the revised text with no explanation."
+        "Do not include timestamps, checklist markers, or metadata prefixes like [2026-..], [LT], or '- [ ]'. "
+        "Return only the revised content text."
     )
     user_text = (
         f"Entry type: {kind}\n"
-        f"Original text:\n{source}\n\n"
+        f"Original text:\n{editable_source}\n\n"
         f"Edit instruction:\n{user_instruction}\n\n"
         "Revised text:"
     )
@@ -649,6 +661,12 @@ def suggest_text_edit_with_ai(original_text: str, instruction: str, *, kind: str
     suggestion = _extract_response_text(payload).strip()
     if not suggestion:
         return False, "AI returned an empty suggestion."
+    suggestion = re.sub(r"^\s*-\s*\[[ xX]\]\s*", "", suggestion).strip()
+    suggestion = re.sub(r"^\s*\[\d{4}-\d{2}-\d{2}[^\]]*\]\s*", "", suggestion).strip()
+    suggestion = re.sub(r"^\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+\(Asia/Shanghai\)\s*", "", suggestion).strip()
+    suggestion = re.sub(r"^\s*\[LT\]\s*", "", suggestion, flags=re.IGNORECASE).strip()
+    if normalize_text(suggestion) == normalize_text(user_instruction):
+        return False, "AI suggestion looked like the instruction itself. Please try a more specific edit instruction."
     return True, suggestion
 
 
