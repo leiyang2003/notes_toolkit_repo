@@ -158,6 +158,7 @@ export default function WorkspaceScreen({
   onApprovePotential,
   onRejectPotential,
   onAiEdit,
+  activeActionKey = "",
 }) {
   const [editDialog, setEditDialog] = useState({ open: false, kind: "note", id: null, text: "" });
   const [showReviewedPotentials, setShowReviewedPotentials] = useState(false);
@@ -183,6 +184,10 @@ export default function WorkspaceScreen({
 
   function openEditDialog(kind, id, text) {
     setEditDialog({ open: true, kind, id, text: editableContent(text) });
+  }
+
+  function isLoading(key) {
+    return activeActionKey === key;
   }
 
   function closeEditDialog() {
@@ -328,8 +333,8 @@ export default function WorkspaceScreen({
                   <RowActions>
                     <ActionButton onClick={() => openEditDialog("note", note.id, note.text)}>Edit</ActionButton>
                     <ActionButton onClick={() => onAiEdit("note", note.id)}>AI edit</ActionButton>
-                    <ActionButton className="danger" onClick={() => onDismissNote(note.id)}>
-                      Dismiss
+                    <ActionButton className="danger" onClick={() => onDismissNote(note.id)} disabled={isLoading(`dismiss-note-${note.id}`)}>
+                      {isLoading(`dismiss-note-${note.id}`) ? "Dismissing..." : "Dismiss"}
                     </ActionButton>
                   </RowActions>
                 </article>
@@ -354,10 +359,12 @@ export default function WorkspaceScreen({
                   <ItemText text={displayBody(todo.text)} />
                 </div>
                 <RowActions>
-                  <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
-                    Complete
+                  <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)} disabled={isLoading(`complete-todo-${todo.id}`)}>
+                    {isLoading(`complete-todo-${todo.id}`) ? "Completing..." : "Complete"}
                   </ActionButton>
-                  <ActionButton onClick={() => onTodoLongTerm(todo.id)}>Mark LT</ActionButton>
+                  <ActionButton onClick={() => onTodoLongTerm(todo.id)} disabled={isLoading(`mark-lt-${todo.id}`)}>
+                    {isLoading(`mark-lt-${todo.id}`) ? "Marking..." : "Mark LT"}
+                  </ActionButton>
                   <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)}>Edit</ActionButton>
                   <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
                 </RowActions>
@@ -376,10 +383,12 @@ export default function WorkspaceScreen({
                   <ItemText text={displayBody(todo.text)} />
                 </div>
                 <RowActions>
-                  <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)}>
-                    Complete
+                  <ActionButton className="action-main" onClick={() => onCompleteTodo(todo.id)} disabled={isLoading(`complete-todo-${todo.id}`)}>
+                    {isLoading(`complete-todo-${todo.id}`) ? "Completing..." : "Complete"}
                   </ActionButton>
-                  <ActionButton onClick={() => onTodoShortTerm(todo.id)}>Mark ST</ActionButton>
+                  <ActionButton onClick={() => onTodoShortTerm(todo.id)} disabled={isLoading(`mark-st-${todo.id}`)}>
+                    {isLoading(`mark-st-${todo.id}`) ? "Marking..." : "Mark ST"}
+                  </ActionButton>
                   <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)}>Edit</ActionButton>
                   <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
                 </RowActions>
@@ -418,11 +427,19 @@ export default function WorkspaceScreen({
                   <ItemText text={displayBody(potential.text)} />
                 </div>
                 <RowActions>
-                  <ActionButton className="positive action-main" onClick={() => onApprovePotential(potential.id)} disabled={potential.status !== "pending"}>
-                    Approve
+                  <ActionButton
+                    className="positive action-main"
+                    onClick={() => onApprovePotential(potential.id)}
+                    disabled={potential.status !== "pending" || isLoading(`approve-potential-${potential.id}`)}
+                  >
+                    {isLoading(`approve-potential-${potential.id}`) ? "Approving..." : "Approve"}
                   </ActionButton>
-                  <ActionButton className="danger" onClick={() => onRejectPotential(potential.id)} disabled={potential.status !== "pending"}>
-                    Reject
+                  <ActionButton
+                    className="danger"
+                    onClick={() => onRejectPotential(potential.id)}
+                    disabled={potential.status !== "pending" || isLoading(`reject-potential-${potential.id}`)}
+                  >
+                    {isLoading(`reject-potential-${potential.id}`) ? "Rejecting..." : "Reject"}
                   </ActionButton>
                 </RowActions>
               </article>
