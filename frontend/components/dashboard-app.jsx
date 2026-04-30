@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import LoginScreen from "./login-screen";
 import ToastStack from "./toast-stack";
 import WorkspaceScreen, { mapAiEditAction, mapEditAction } from "./workspace-screen";
@@ -48,10 +48,9 @@ function focusById(id) {
     return;
   }
   const element = document.getElementById(id);
-  if (!element) {
-    return;
+  if (element) {
+    element.focus();
   }
-  element.focus();
 }
 
 function isTypingTarget(target) {
@@ -88,7 +87,6 @@ export default function DashboardApp({ initialProjectName = "" }) {
     step: "instruction",
     loading: false,
   });
-  const latestStateVersion = useRef(0);
 
   const client = useMemo(() => createApiClient(backendBaseUrl), [backendBaseUrl]);
 
@@ -124,18 +122,12 @@ export default function DashboardApp({ initialProjectName = "" }) {
     if (!projectName || isPreviewWorkspace) {
       return;
     }
-
     if (!silent) {
       setIsRefreshing(true);
     }
-
     try {
       const response = await client.getProjectState(projectName);
-      const version = Number(response.state_version_ns || 0);
-      if (version >= latestStateVersion.current) {
-        latestStateVersion.current = version;
-        setState(response);
-      }
+      setState(response);
     } catch (error) {
       pushToast("error", "Refresh failed", error.message || "Could not refresh project state.");
     } finally {
@@ -161,9 +153,7 @@ export default function DashboardApp({ initialProjectName = "" }) {
 
       if (previewMode) {
         setSession({ ok: true, logged_in: true, email: "preview@notes-toolkit.local" });
-        setProjects([
-          { project: "preview-home", todo_count: 2, potential_pending_count: 1, last_activity: PREVIEW_STATE.updated_at },
-        ]);
+        setProjects([{ project: "preview-home", todo_count: 2, potential_pending_count: 1, last_activity: PREVIEW_STATE.updated_at }]);
         setActiveProject("preview-home");
         setState(PREVIEW_STATE);
         return;
@@ -190,7 +180,6 @@ export default function DashboardApp({ initialProjectName = "" }) {
 
       if (preferredProject) {
         const nextState = await freshClient.getProjectState(preferredProject);
-        latestStateVersion.current = Number(nextState.state_version_ns || 0);
         setState(nextState);
       }
     } catch (error) {
@@ -209,18 +198,6 @@ export default function DashboardApp({ initialProjectName = "" }) {
     bootstrap();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialProjectName]);
-
-  useEffect(() => {
-    if (!session.logged_in || !activeProject || isPreviewWorkspace) {
-      return undefined;
-    }
-
-    const timer = window.setInterval(() => {
-      refreshState(activeProject, { silent: true });
-    }, 15000);
-
-    return () => window.clearInterval(timer);
-  }, [session.logged_in, activeProject, isPreviewWorkspace]);
 
   useEffect(() => {
     if (!session.logged_in) {
@@ -255,9 +232,8 @@ export default function DashboardApp({ initialProjectName = "" }) {
 
   async function runAction(action, payload = {}) {
     if (!activeProject) {
-      return;
+      return null;
     }
-
     if (isPreviewWorkspace) {
       pushToast("info", "Preview mode", "Action is disabled in preview mode.");
       return null;
@@ -267,7 +243,6 @@ export default function DashboardApp({ initialProjectName = "" }) {
     try {
       const response = await client.runAction(activeProject, { action, actor: "web", ...payload });
       if (response.state) {
-        latestStateVersion.current = Number(response.state.state_version_ns || 0);
         setState(response.state);
       } else {
         await refreshState(activeProject, { silent: true });
@@ -285,27 +260,11 @@ export default function DashboardApp({ initialProjectName = "" }) {
   }
 
   function openAiEditDialog(kind, id) {
-    setAiDialog({
-      open: true,
-      kind,
-      id,
-      instruction: "",
-      suggestion: "",
-      step: "instruction",
-      loading: false,
-    });
+    setAiDialog({ open: true, kind, id, instruction: "", suggestion: "", step: "instruction", loading: false });
   }
 
   function closeAiEditDialog() {
-    setAiDialog({
-      open: false,
-      kind: "note",
-      id: null,
-      instruction: "",
-      suggestion: "",
-      step: "instruction",
-      loading: false,
-    });
+    setAiDialog({ open: false, kind: "note", id: null, instruction: "", suggestion: "", step: "instruction", loading: false });
   }
 
   async function submitAiInstruction(event) {
@@ -380,16 +339,18 @@ export default function DashboardApp({ initialProjectName = "" }) {
       setIsCreatingProject(false);
       setNewProjectName("");
       setActiveProject(targetProject);
+
       if (created.state) {
-        latestStateVersion.current = Number(created.state.state_version_ns || 0);
         setState(created.state);
       } else {
         await refreshState(targetProject, { silent: true });
       }
+
       if (typeof window !== "undefined") {
         window.history.replaceState({}, "", `/project/${encodeURIComponent(targetProject)}`);
       }
       pushToast("success", "Project created", `Switched to ${targetProject}.`);
+
       if (!nextProjects.some((item) => item.project === targetProject)) {
         await refreshProjectsList();
       }
