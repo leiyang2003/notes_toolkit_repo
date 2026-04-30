@@ -47,6 +47,17 @@ class NotesService:
             "state": self.repo.user_project_state(user.user_id, project_name),
         }
 
+    def create_project(self, user: AuthUser, project_name: str) -> dict:
+        existing = self.repo.user_projects_summary(user.user_id)
+        if any(str(item.get("project", "")) == project_name for item in existing):
+            return {"ok": False, "code": "project_exists", "message": f"Project '{project_name}' already exists."}
+        project_paths(scoped_project_name(user.user_id, project_name), create=True)
+        return {
+            "ok": True,
+            "project": project_name,
+            "state": self.repo.user_project_state(user.user_id, project_name),
+        }
+
     def run_action(self, user: AuthUser, project_name: str, action: ActionType, actor: str, *, item_id: int | None, text: str | None, instruction: str | None) -> ServiceResult:
         paths = self.repo.scoped_paths(user.user_id, project_name)
 

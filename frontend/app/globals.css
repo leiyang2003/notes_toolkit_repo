@@ -232,6 +232,29 @@ h3,
   flex-wrap: wrap;
 }
 
+.project-create-bar {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.project-create-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.project-create-form label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.project-create-form input {
+  min-width: 220px;
+}
+
 .project-picker,
 input {
   border: 1px solid var(--line);
@@ -239,6 +262,16 @@ input {
   padding: 10px 12px;
   font-size: 14px;
   min-width: 180px;
+}
+
+textarea {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 14px;
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
 }
 
 .workspace-metrics {
@@ -462,6 +495,50 @@ input {
   border-color: color-mix(in srgb, var(--danger), white 60%);
 }
 
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 32, 43, 0.4);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  z-index: 60;
+  padding: 16px;
+}
+
+.dialog-modal {
+  width: min(680px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.dialog-header h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.dialog-form {
+  display: grid;
+  gap: 8px;
+}
+
+.dialog-form label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 1180px) {
   .workspace-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -496,7 +573,8 @@ input {
   }
 
   .project-picker,
-  input {
+  input,
+  textarea {
     min-width: 0;
     width: 100%;
   }
@@ -508,6 +586,15 @@ input {
   .header-actions .btn,
   .header-actions .project-picker {
     flex: 1 1 100%;
+  }
+
+  .project-create-form .btn {
+    flex: 1 1 100%;
+  }
+
+  .project-create-form input {
+    min-width: 0;
+    width: 100%;
   }
 
   .composer div {

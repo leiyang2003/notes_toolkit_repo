@@ -9,12 +9,37 @@ from ..dependencies import get_current_user_required
 
 router = APIRouter()
 
+def _validate_project_name(raw_value: object) -> tuple[bool, str]:
+    project_name = str(raw_value or "").strip()
+    if not project_name:
+        return False, "Project name is required."
+    if len(project_name) > 80:
+        return False, "Project name must be at most 80 characters."
+    if any(ch in project_name for ch in ("/", "\\", "\x00")):
+        return False, "Project name contains invalid characters."
+    return True, project_name
+
 
 @router.post("/api/init")
 def api_init(payload: dict, request: Request, user=Depends(get_current_user_required)):
-    project_name = str(payload.get("project_name", "home")).strip() or "home"
+    ok, project_name = _validate_project_name(payload.get("project_name", "home"))
+    if not ok:
+        return JSONResponse({"ok": False, "code": "project_invalid", "message": project_name}, status_code=400)
     service = request.app.state.service
     return service.ensure_first_project(user, project_name)
+
+@router.post("/api/projects")
+def api_create_project(payload: dict, request: Request, user=Depends(get_current_user_required)):
+    ok, project_name = _validate_project_name(payload.get("project_name", ""))
+    if not ok:
+        return JSONResponse({"ok": False, "code": "project_invalid", "message": project_name}, status_code=400)
+
+    service = request.app.state.service
+    result = service.create_project(user, project_name)
+    if not result.get("ok"):
+        status = 409 if result.get("code") == "project_exists" else 400
+        return JSONResponse(result, status_code=status)
+    return result
 
 
 @router.get("/api/project/{project_name}/state")

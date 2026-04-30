@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import LoginScreen from "./login-screen";
 import ToastStack from "./toast-stack";
 import WorkspaceScreen, { mapAiEditAction, mapEditAction } from "./workspace-screen";
+import { DialogModal } from "./dialog-modal";
 import { ACTION_TYPES, ApiError, createApiClient } from "../lib/api-client";
 import { loadRuntimeConfig } from "../lib/runtime-config";
 
@@ -76,6 +77,17 @@ export default function DashboardApp({ initialProjectName = "" }) {
   const [noteQuery, setNoteQuery] = useState("");
   const [todoQuery, setTodoQuery] = useState("");
   const [potentialQuery, setPotentialQuery] = useState("");
+  const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [aiDialog, setAiDialog] = useState({
+    open: false,
+    kind: "note",
+    id: null,
+    instruction: "",
+    suggestion: "",
+    step: "instruction",
+    loading: false,
+  });
   const latestStateVersion = useRef(0);
 
   const client = useMemo(() => createApiClient(backendBaseUrl), [backendBaseUrl]);
@@ -131,6 +143,13 @@ export default function DashboardApp({ initialProjectName = "" }) {
         setIsRefreshing(false);
       }
     }
+  }
+
+  async function refreshProjectsList() {
+    const payload = await client.getProjects();
+    const nextProjects = Array.isArray(payload.projects) ? payload.projects : [];
+    setProjects(nextProjects);
+    return nextProjects;
   }
 
   async function bootstrap() {
@@ -265,23 +284,54 @@ export default function DashboardApp({ initialProjectName = "" }) {
     }
   }
 
-  async function handleAiEdit(kind, id) {
-    const instruction = window.prompt("Describe how to rewrite this entry");
-    if (!instruction) {
+  function openAiEditDialog(kind, id) {
+    setAiDialog({
+      open: true,
+      kind,
+      id,
+      instruction: "",
+      suggestion: "",
+      step: "instruction",
+      loading: false,
+    });
+  }
+
+  function closeAiEditDialog() {
+    setAiDialog({
+      open: false,
+      kind: "note",
+      id: null,
+      instruction: "",
+      suggestion: "",
+      step: "instruction",
+      loading: false,
+    });
+  }
+
+  async function submitAiInstruction(event) {
+    event.preventDefault();
+    const instruction = String(aiDialog.instruction || "").trim();
+    if (!instruction || aiDialog.id === null) {
       return;
     }
 
-    const suggestion = await runAction(mapAiEditAction(kind), { id, instruction });
+    setAiDialog((prev) => ({ ...prev, loading: true }));
+    const suggestion = await runAction(mapAiEditAction(aiDialog.kind), { id: aiDialog.id, instruction });
     if (!suggestion?.edited_text) {
+      setAiDialog((prev) => ({ ...prev, loading: false }));
       return;
     }
 
-    const approved = window.confirm(`AI suggestion:\n\n${suggestion.edited_text}\n\nApply this edit?`);
-    if (!approved) {
+    setAiDialog((prev) => ({ ...prev, loading: false, suggestion: suggestion.edited_text, step: "preview" }));
+  }
+
+  async function applyAiSuggestion() {
+    if (!aiDialog.suggestion || aiDialog.id === null) {
       return;
     }
-
-    await runAction(mapEditAction(kind), { id, text: suggestion.edited_text });
+    setAiDialog((prev) => ({ ...prev, loading: true }));
+    await runAction(mapEditAction(aiDialog.kind), { id: aiDialog.id, text: aiDialog.suggestion });
+    closeAiEditDialog();
   }
 
   function login() {
@@ -309,6 +359,58 @@ export default function DashboardApp({ initialProjectName = "" }) {
     if (typeof window !== "undefined") {
       window.history.replaceState({}, "", `/project/${encodeURIComponent(projectName)}`);
     }
+  }
+
+  async function handleCreateProject() {
+    if (isPreviewWorkspace) {
+      pushToast("info", "Preview mode", "Creation is disabled in preview mode.");
+      return;
+    }
+    const normalized = newProjectName.trim();
+    if (!normalized) {
+      pushToast("error", "Invalid name", "Project name is required.");
+      return;
+    }
+
+    setIsRefreshing(true);
+    try {
+      const created = await client.createProject(normalized);
+      const nextProjects = await refreshProjectsList();
+      const targetProject = created.project || normalized;
+      setIsCreatingProject(false);
+      setNewProjectName("");
+      setActiveProject(targetProject);
+      if (created.state) {
+        latestStateVersion.current = Number(created.state.state_version_ns || 0);
+        setState(created.state);
+      } else {
+        await refreshState(targetProject, { silent: true });
+      }
+      if (typeof window !== "undefined") {
+        window.history.replaceState({}, "", `/project/${encodeURIComponent(targetProject)}`);
+      }
+      pushToast("success", "Project created", `Switched to ${targetProject}.`);
+      if (!nextProjects.some((item) => item.project === targetProject)) {
+        await refreshProjectsList();
+      }
+    } catch (error) {
+      pushToast("error", "Create project failed", error.message || "Unable to create project.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  function handleStartCreateProject() {
+    if (isPreviewWorkspace) {
+      pushToast("info", "Preview mode", "Creation is disabled in preview mode.");
+      return;
+    }
+    setIsCreatingProject(true);
+  }
+
+  function handleCancelCreateProject() {
+    setIsCreatingProject(false);
+    setNewProjectName("");
   }
 
   async function handleManualRefresh() {
@@ -355,6 +457,12 @@ export default function DashboardApp({ initialProjectName = "" }) {
           onQuickAddNote={() => focusById("new-note")}
           onQuickAddTodo={() => focusById("new-todo")}
           onProjectChange={handleProjectChange}
+          onStartCreateProject={handleStartCreateProject}
+          onCreateProject={handleCreateProject}
+          onCancelCreateProject={handleCancelCreateProject}
+          isCreatingProject={isCreatingProject}
+          newProjectName={newProjectName}
+          onNewProjectNameChange={setNewProjectName}
           onRefresh={handleManualRefresh}
           onLogout={logout}
           onAddNote={async (event) => {
@@ -391,9 +499,59 @@ export default function DashboardApp({ initialProjectName = "" }) {
           onEditTodo={(id, text) => runAction(ACTION_TYPES.EDIT_TODO, { id, text })}
           onApprovePotential={(id) => runAction(ACTION_TYPES.APPROVE_POTENTIAL, { id })}
           onRejectPotential={(id) => runAction(ACTION_TYPES.REJECT_POTENTIAL, { id })}
-          onAiEdit={handleAiEdit}
+          onAiEdit={openAiEditDialog}
         />
       )}
+
+      <DialogModal
+        open={aiDialog.open}
+        title={aiDialog.step === "instruction" ? "AI rewrite" : "Apply AI suggestion"}
+        actions={
+          aiDialog.step === "instruction" ? (
+            <>
+              <button className="btn" type="button" onClick={closeAiEditDialog} disabled={aiDialog.loading}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                type="submit"
+                form="ai-instruction-form"
+                disabled={aiDialog.loading || !String(aiDialog.instruction || "").trim()}
+              >
+                {aiDialog.loading ? "Generating..." : "Generate"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="btn" type="button" onClick={closeAiEditDialog} disabled={aiDialog.loading}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" type="button" onClick={applyAiSuggestion} disabled={aiDialog.loading}>
+                {aiDialog.loading ? "Applying..." : "Apply"}
+              </button>
+            </>
+          )
+        }
+      >
+        {aiDialog.step === "instruction" ? (
+          <form id="ai-instruction-form" className="dialog-form" onSubmit={submitAiInstruction}>
+            <label htmlFor="ai-instruction">Describe how to rewrite this entry</label>
+            <textarea
+              id="ai-instruction"
+              rows={4}
+              value={aiDialog.instruction}
+              onChange={(event) => setAiDialog((prev) => ({ ...prev, instruction: event.target.value }))}
+              autoFocus
+            />
+          </form>
+        ) : (
+          <div className="dialog-form">
+            <label htmlFor="ai-suggestion">AI suggestion</label>
+            <textarea id="ai-suggestion" rows={8} value={aiDialog.suggestion} readOnly />
+          </div>
+        )}
+      </DialogModal>
+
       <ToastStack toasts={toasts} onDismiss={(id) => setToasts((prev) => prev.filter((item) => item.id !== id))} />
     </div>
   );

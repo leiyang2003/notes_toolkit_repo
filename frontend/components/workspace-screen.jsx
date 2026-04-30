@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ACTION_TYPES } from "../lib/api-client";
+import { DialogModal } from "./dialog-modal";
 
 const FILTERS = [
   { key: "all", label: "All" },
@@ -97,7 +98,6 @@ function stripMetadataPrefixes(text) {
   const longTermPrefix = /^\s*\[LT\]\s*/i;
 
   raw = raw.replace(todoPrefix, "").trim();
-  // Strip system-managed metadata prefixes until content starts.
   while (true) {
     const next = raw.replace(longTermPrefix, "").replace(timestampPrefix, "").trim();
     if (next === raw) {
@@ -139,6 +139,12 @@ export default function WorkspaceScreen({
   onQuickAddNote,
   onQuickAddTodo,
   onProjectChange,
+  onStartCreateProject,
+  onCreateProject,
+  onCancelCreateProject,
+  isCreatingProject,
+  newProjectName,
+  onNewProjectNameChange,
   onRefresh,
   onLogout,
   onAddNote,
@@ -153,8 +159,10 @@ export default function WorkspaceScreen({
   onRejectPotential,
   onAiEdit,
 }) {
+  const [editDialog, setEditDialog] = useState({ open: false, kind: "note", id: null, text: "" });
   const [showReviewedPotentials, setShowReviewedPotentials] = useState(false);
   const [showCompletedItems, setShowCompletedItems] = useState(true);
+
   const filteredNotes = (state.notes || []).filter(
     (note) => includesText(note.text, noteQuery) || includesText(note.section, noteQuery),
   );
@@ -173,6 +181,28 @@ export default function WorkspaceScreen({
   const showPotentials = viewFilter === "all" || viewFilter === "potentials";
   const showDone = viewFilter === "all" || viewFilter === "done";
 
+  function openEditDialog(kind, id, text) {
+    setEditDialog({ open: true, kind, id, text: editableContent(text) });
+  }
+
+  function closeEditDialog() {
+    setEditDialog({ open: false, kind: "note", id: null, text: "" });
+  }
+
+  async function submitEditDialog(event) {
+    event.preventDefault();
+    const nextText = String(editDialog.text || "").trim();
+    if (!nextText || editDialog.id === null) {
+      return;
+    }
+    if (editDialog.kind === "note") {
+      await onEditNote(editDialog.id, nextText);
+    } else {
+      await onEditTodo(editDialog.id, nextText);
+    }
+    closeEditDialog();
+  }
+
   return (
     <main className="workspace-view">
       <header className="workspace-header">
@@ -182,11 +212,7 @@ export default function WorkspaceScreen({
           <p className="helper-text">Signed in as {session.email || "unknown"}</p>
         </div>
         <div className="header-actions">
-          <select
-            className="project-picker"
-            value={activeProject || ""}
-            onChange={(event) => onProjectChange(event.target.value)}
-          >
+          <select className="project-picker" value={activeProject || ""} onChange={(event) => onProjectChange(event.target.value)}>
             {projects.map((project) => (
               <option key={project.project} value={project.project}>
                 {project.project} ({project.todo_count} todos)
@@ -196,11 +222,44 @@ export default function WorkspaceScreen({
           <button className="btn" onClick={onRefresh}>
             {isRefreshing ? "Refreshing..." : "Refresh"}
           </button>
+          {!isCreatingProject ? (
+            <button className="btn btn-primary" onClick={onStartCreateProject}>
+              New Project
+            </button>
+          ) : null}
           <button className="btn" onClick={onLogout}>
             Logout
           </button>
         </div>
       </header>
+
+      {isCreatingProject ? (
+        <section className="project-create-bar">
+          <form
+            className="project-create-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onCreateProject();
+            }}
+          >
+            <label htmlFor="new-project-name">New project</label>
+            <input
+              id="new-project-name"
+              value={newProjectName}
+              onChange={(event) => onNewProjectNameChange(event.target.value)}
+              placeholder="e.g. hiring-q3"
+              maxLength={80}
+              autoFocus
+            />
+            <button className="btn btn-primary" type="submit" disabled={isRefreshing || !String(newProjectName || "").trim()}>
+              {isRefreshing ? "Creating..." : "Create"}
+            </button>
+            <button className="btn" type="button" onClick={onCancelCreateProject} disabled={isRefreshing}>
+              Cancel
+            </button>
+          </form>
+        </section>
+      ) : null}
 
       <section className="workspace-metrics">
         <Metric label="Notes" value={state.notes_count || 0} />
@@ -227,12 +286,7 @@ export default function WorkspaceScreen({
       <section className="filter-bar">
         <div className="filter-chip-group">
           {FILTERS.map((item) => (
-            <FilterChip
-              key={item.key}
-              label={item.label}
-              active={viewFilter === item.key}
-              onClick={() => onViewFilterChange(item.key)}
-            />
+            <FilterChip key={item.key} label={item.label} active={viewFilter === item.key} onClick={() => onViewFilterChange(item.key)} />
           ))}
         </div>
       </section>
@@ -262,12 +316,7 @@ export default function WorkspaceScreen({
         {showNotes ? (
           <SectionCard title="Notes" count={filteredNotes.length} className="notes-panel">
             <div className="section-tools">
-              <input
-                id="notes-filter"
-                placeholder="Filter notes by text or section"
-                value={noteQuery}
-                onChange={(event) => onNoteQueryChange(event.target.value)}
-              />
+              <input id="notes-filter" placeholder="Filter notes by text or section" value={noteQuery} onChange={(event) => onNoteQueryChange(event.target.value)} />
             </div>
             {filteredNotes.length ? (
               filteredNotes.map((note) => (
@@ -277,16 +326,7 @@ export default function WorkspaceScreen({
                     <ItemText text={displayBody(note.text)} />
                   </div>
                   <RowActions>
-                    <ActionButton
-                      onClick={() => {
-                        const nextText = window.prompt("Edit note text", editableContent(note.text));
-                        if (nextText && nextText.trim()) {
-                          onEditNote(note.id, nextText.trim());
-                        }
-                      }}
-                    >
-                      Edit
-                    </ActionButton>
+                    <ActionButton onClick={() => openEditDialog("note", note.id, note.text)}>Edit</ActionButton>
                     <ActionButton onClick={() => onAiEdit("note", note.id)}>AI edit</ActionButton>
                     <ActionButton className="danger" onClick={() => onDismissNote(note.id)}>
                       Dismiss
@@ -303,12 +343,7 @@ export default function WorkspaceScreen({
         {showTodos ? (
           <SectionCard title="Open Todos" count={filteredTodos.length} className="todos-panel">
             <div className="section-tools">
-              <input
-                id="todos-filter"
-                placeholder="Filter todos"
-                value={todoQuery}
-                onChange={(event) => onTodoQueryChange(event.target.value)}
-              />
+              <input id="todos-filter" placeholder="Filter todos" value={todoQuery} onChange={(event) => onTodoQueryChange(event.target.value)} />
             </div>
 
             {shortTermTodos.length ? <p className="section-divider">Short-term</p> : null}
@@ -323,16 +358,7 @@ export default function WorkspaceScreen({
                     Complete
                   </ActionButton>
                   <ActionButton onClick={() => onTodoLongTerm(todo.id)}>Mark LT</ActionButton>
-                  <ActionButton
-                    onClick={() => {
-                      const nextText = window.prompt("Edit todo text", editableContent(todo.text));
-                      if (nextText && nextText.trim()) {
-                        onEditTodo(todo.id, nextText.trim());
-                      }
-                    }}
-                  >
-                    Edit
-                  </ActionButton>
+                  <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)}>Edit</ActionButton>
                   <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
                 </RowActions>
               </article>
@@ -354,24 +380,13 @@ export default function WorkspaceScreen({
                     Complete
                   </ActionButton>
                   <ActionButton onClick={() => onTodoShortTerm(todo.id)}>Mark ST</ActionButton>
-                  <ActionButton
-                    onClick={() => {
-                      const nextText = window.prompt("Edit todo text", editableContent(todo.text));
-                      if (nextText && nextText.trim()) {
-                        onEditTodo(todo.id, nextText.trim());
-                      }
-                    }}
-                  >
-                    Edit
-                  </ActionButton>
+                  <ActionButton onClick={() => openEditDialog("todo", todo.id, todo.text)}>Edit</ActionButton>
                   <ActionButton onClick={() => onAiEdit("todo", todo.id)}>AI edit</ActionButton>
                 </RowActions>
               </article>
             ))}
 
-            {!filteredTodos.length ? (
-              <EmptyState text="No matching todos." />
-            ) : null}
+            {!filteredTodos.length ? <EmptyState text="No matching todos." /> : null}
           </SectionCard>
         ) : null}
 
@@ -385,11 +400,7 @@ export default function WorkspaceScreen({
                 onChange={(event) => onPotentialQueryChange(event.target.value)}
               />
               {reviewedPotentials.length ? (
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setShowReviewedPotentials((prev) => !prev)}
-                  type="button"
-                >
+                <button className="btn btn-ghost" onClick={() => setShowReviewedPotentials((prev) => !prev)} type="button">
                   {showReviewedPotentials ? "Hide reviewed" : `Show reviewed (${reviewedPotentials.length})`}
                 </button>
               ) : null}
@@ -407,18 +418,10 @@ export default function WorkspaceScreen({
                   <ItemText text={displayBody(potential.text)} />
                 </div>
                 <RowActions>
-                  <ActionButton
-                    className="positive action-main"
-                    onClick={() => onApprovePotential(potential.id)}
-                    disabled={potential.status !== "pending"}
-                  >
+                  <ActionButton className="positive action-main" onClick={() => onApprovePotential(potential.id)} disabled={potential.status !== "pending"}>
                     Approve
                   </ActionButton>
-                  <ActionButton
-                    className="danger"
-                    onClick={() => onRejectPotential(potential.id)}
-                    disabled={potential.status !== "pending"}
-                  >
+                  <ActionButton className="danger" onClick={() => onRejectPotential(potential.id)} disabled={potential.status !== "pending"}>
                     Reject
                   </ActionButton>
                 </RowActions>
@@ -442,9 +445,7 @@ export default function WorkspaceScreen({
               : null}
 
             {!filteredPotentials.length ? <EmptyState text="No matching potential actions." /> : null}
-            {filteredPotentials.length && !hasVisiblePotentials ? (
-              <EmptyState text="Reviewed actions are hidden." />
-            ) : null}
+            {filteredPotentials.length && !hasVisiblePotentials ? <EmptyState text="Reviewed actions are hidden." /> : null}
           </SectionCard>
         ) : null}
 
@@ -453,11 +454,7 @@ export default function WorkspaceScreen({
             {state.done?.length ? (
               <div className="section-tools section-tools-row">
                 <div />
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setShowCompletedItems((prev) => !prev)}
-                  type="button"
-                >
+                <button className="btn btn-ghost" onClick={() => setShowCompletedItems((prev) => !prev)} type="button">
                   {showCompletedItems ? "Hide completed" : `Show completed (${state.done.length})`}
                 </button>
               </div>
@@ -489,6 +486,32 @@ export default function WorkspaceScreen({
           potentials
         </p>
       </footer>
+
+      <DialogModal
+        open={editDialog.open}
+        title={editDialog.kind === "note" ? "Edit note" : "Edit todo"}
+        actions={
+          <>
+            <button className="btn" type="button" onClick={closeEditDialog}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" type="submit" form="edit-item-form" disabled={!String(editDialog.text || "").trim()}>
+              Save
+            </button>
+          </>
+        }
+      >
+        <form id="edit-item-form" className="dialog-form" onSubmit={submitEditDialog}>
+          <label htmlFor="edit-item-text">Content</label>
+          <textarea
+            id="edit-item-text"
+            value={editDialog.text}
+            onChange={(event) => setEditDialog((prev) => ({ ...prev, text: event.target.value }))}
+            rows={5}
+            autoFocus
+          />
+        </form>
+      </DialogModal>
     </main>
   );
 }

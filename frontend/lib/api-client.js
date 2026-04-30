@@ -69,6 +69,12 @@ export function createApiClient(backendBaseUrl) {
         body: JSON.stringify({ project_name: projectName }),
       });
     },
+    createProject(projectName) {
+      return call("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ project_name: projectName }),
+      });
+    },
     getProjectState(projectName) {
       return call(`/api/project/${encodeURIComponent(projectName)}/state`, { method: "GET" });
     },
